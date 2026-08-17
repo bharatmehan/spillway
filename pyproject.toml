@@ -1,3 +1,10 @@
+[tool.uv]
+# One source of truth for the tool version, read both by uv locally and by the setup action
+# in continuous integration. Without it, a contributor's uv and the one in the workflow can
+# be months apart, and the promise that a green `just check` means a green build is only
+# true by luck. The lockfile is used frozen, so the resolver version is load bearing.
+required-version = ">=0.12.5,<0.13"
+
 [tool.uv.workspace]
 members = ["packages/*"]
 
