@@ -1,0 +1,65 @@
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18",
+    "pytest>=8.4",
+    "ruff>=0.16",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["packages/spillway/src", "packages/spillway/tests"]
+
+[tool.ruff.lint]
+select = [
+    "ANN",    # missing annotations
+    "ARG",    # unused arguments
+    "ASYNC",  # blocking calls in async code
+    "B",      # bugbear
+    "C4",     # comprehensions
+    "D",      # docstrings
+    "DTZ",    # naive datetimes
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # import order
+    "N",      # naming
+    "PIE",    # misc lints
+    "PTH",    # pathlib over os.path
+    "RET",    # return statements
+    "RUF",    # ruff specific
+    "S",      # security
+    "SIM",    # simplify
+    "T20",    # print statements
+    "TID",    # tidy imports
+    "UP",     # pyupgrade
+    "W",      # pycodestyle warnings
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.per-file-ignores]
+"packages/*/tests/**" = ["ANN", "D", "S101"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["packages/spillway/src"]
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/spillway/tests"]
+addopts = "--strict-markers --strict-config"
+markers = [
+    "redis: needs a running coordination store",
+    "slow: takes more than a second",
+    "integration: crosses a process or network boundary",
+    "bench: measures rather than asserts",
+]

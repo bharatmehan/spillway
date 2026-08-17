@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.lua text
+uv.lock -diff linguist-generated=true
+CHANGELOG.md -diff

@@ -1,0 +1,39 @@
+name: release
+
+# Publishing happens only from a tag pushed by a human. There is no other trigger,
+# and no stored credential: authentication is a short lived token issued to this
+# workflow by the package index.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Confirm the tag matches the packaged version
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          packaged=$(uv version --package spillway --short)
+          test "$tagged" = "$packaged" || {
+            echo "tag $GITHUB_REF_NAME does not match packaged version $packaged"
+            exit 1
+          }
+
+      - run: uv build --package spillway
+
+      - name: Install the built wheel into a clean environment and import it
+        run: |
+          uv run --no-project --isolated --with ./dist/spillway-*.whl \
+            python -c "import spillway; print(spillway.__version__)"
+
+      - run: uv publish --trusted-publishing always
