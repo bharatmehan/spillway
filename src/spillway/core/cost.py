@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -75,3 +76,103 @@ class Cost:
             requests=self.requests - other.requests,
             extra=extra,
         )
+
+
+DistributionKind = Literal["point", "bounded"]
+
+
+@dataclass(frozen=True)
+class Distribution:
+    """A prediction of how many output tokens a request will produce.
+
+    Output length is the one part of a request's cost that cannot be known
+    before the call, so it is represented as a distribution rather than a
+    number. Admission reserves a quantile of it, which is what makes reserving
+    conservatively affordable: the surplus is credited back the moment the real
+    figure is known.
+
+    Construct one through `point` or `bounded_by` rather than directly. Both
+    currently answer every quantile with the same number, and they are separate
+    kinds because they mean different things to a reader and because later
+    stages treat a bound as a fallback rather than a belief.
+
+    Example:
+        >>> known = Distribution.point(300)
+        >>> known.quantile(0.5), known.quantile(0.9)
+        (300, 300)
+        >>> Distribution.bounded_by(4096).quantile(0.9)
+        4096
+    """
+
+    kind: DistributionKind
+    value: int
+
+    def __post_init__(self) -> None:
+        """Reject a negative token count, which no provider can produce."""
+        if self.value < 0:
+            message = f"An output token count cannot be negative, got {self.value}."
+            raise ValueError(message)
+
+    @classmethod
+    def point(cls, value: int) -> Distribution:
+        """Predict exactly `value` output tokens.
+
+        Use this when output length is genuinely known, for instance a
+        classifier that answers with a single label. It exists so that a user
+        who knows the answer is not forced through a probabilistic API.
+        """
+        return cls(kind="point", value=value)
+
+    @classmethod
+    def bounded_by(cls, max_tokens: int) -> Distribution:
+        """Predict nothing, and reserve the worst case of `max_tokens`.
+
+        The safe, uninformed baseline, and what a provider that meters on the
+        requested maximum does itself. It is correct and it is expensive: if
+        the maximum is 4096 and the median output is 300, it reserves roughly
+        thirteen times what is used.
+        """
+        return cls(kind="bounded", value=max_tokens)
+
+    def quantile(self, q: float) -> int:
+        """Return the output length at quantile `q`, where `q` is in [0, 1].
+
+        Raises:
+            ValueError: if `q` is outside [0, 1].
+        """
+        if not 0.0 <= q <= 1.0:
+            message = f"A quantile must be between 0 and 1 inclusive, got {q}."
+            raise ValueError(message)
+        return self.value
+
+
+@dataclass(frozen=True)
+class Estimate:
+    """What a request is predicted to cost, before it is made.
+
+    The asymmetry between the two token fields is the point. Input is counted,
+    output is predicted, and pretending otherwise is how limiters end up either
+    reserving thirteen times too much or discovering the overshoot from a
+    provider error.
+
+    Attributes:
+        input: Exact input tokens, countable before the call.
+        output: Predicted output length.
+        model: The model this estimate is for, when known. Later stages key
+            learned statistics on it.
+
+    Example:
+        >>> estimate = Estimate(input=12_400, output=Distribution.point(415))
+        >>> estimate.input, estimate.output.quantile(0.9)
+        (12400, 415)
+    """
+
+    input: int
+    output: Distribution
+    model: str | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a negative input count, which no prompt can have."""
+        if self.input < 0:
+            message = f"An input token count cannot be negative, got {self.input}."
+            raise ValueError(message)

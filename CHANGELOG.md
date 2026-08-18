@@ -13,6 +13,9 @@ version is below 0.1, any release may change anything.
 - A `Cost` value type: input tokens, output tokens, requests, and provider specific extra
   categories. Subtraction keeps the sign, because settlement is a difference and a negative
   component is an overrun to repay rather than a number to discard.
+- `Distribution` and `Estimate`. Output length is predicted rather than known, so it is carried as
+  a distribution with a `quantile` method. Two constructors for now: an exact point, and a worst
+  case bound.
 
 ### Changed
 
