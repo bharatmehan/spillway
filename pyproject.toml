@@ -51,6 +51,7 @@ required-version = ">=0.12.5,<0.13"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.100",
     "mypy>=1.18",
     "pytest>=8.4",
     "pytest-asyncio>=1.0",

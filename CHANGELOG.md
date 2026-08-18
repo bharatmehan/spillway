@@ -83,6 +83,9 @@ version is below 0.1, any release may change anything.
   anything, so it is safe to call from a health check. Limits come from the dimensions rather than
   from the store, so a dimension reports its real limit before its first request rather than
   appearing to have none.
+- Property based testing, with a fixed seed in continuous integration and a random one locally. A
+  fixed seed makes a red build reproducible on the machine of whoever has to fix it; a random one
+  keeps the suite exploring rather than re examining the same cases for ever.
 
 ### Changed
 
