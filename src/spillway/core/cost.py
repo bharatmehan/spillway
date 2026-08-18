@@ -8,7 +8,8 @@ number loses exactly the information admission control needs.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -176,3 +177,81 @@ class Estimate:
         if self.input < 0:
             message = f"An input token count cannot be negative, got {self.input}."
             raise ValueError(message)
+
+
+CHARACTERS_PER_TOKEN = 3.6
+"""Characters per token, averaged over English prose.
+
+Counting tokens exactly needs a tokenizer, which is a heavy dependency per
+model, and the quickstart has to work with nothing installed. This divisor is
+within roughly ten to fifteen percent for English and drifts further for code
+and for languages that do not use a Latin script.
+
+Undercounting is not a correctness problem here. The real figure replaces the
+estimate at settlement, exactly like a mistaken output prediction does.
+"""
+
+# ponytail: a flat guess, wrong for both a one word classification and a long
+# report. Superseded per route once the estimator learns from settled requests.
+# Pass max_tokens, or an explicit Estimate, to bypass it entirely.
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
+"""Output tokens reserved when the caller names no maximum."""
+
+
+def _text_length(part: object) -> int:
+    """Return the character count of anything a caller might call a prompt."""
+    if isinstance(part, str):
+        return len(part)
+    if isinstance(part, Mapping):
+        content = part.get("content")
+        if content is None:
+            return 0
+        return _text_length(content)
+    if isinstance(part, Sequence):
+        total = 0
+        for item in part:
+            total += _text_length(item)
+        return total
+    return len(str(part))
+
+
+def default_estimate(
+    prompt: str | Sequence[object] | None = None,
+    *,
+    max_tokens: int | None = None,
+    model: str | None = None,
+) -> Estimate:
+    """Estimate a request's cost from its prompt and its requested output length.
+
+    Input is counted with a character heuristic, so it is approximate and
+    documented as such. Output is reserved at the requested maximum, which is
+    the safe and uninformed answer.
+
+    Args:
+        prompt: A string, or a sequence of message mappings in the shape the
+            provider SDKs use. Anything else is stringified and measured.
+        max_tokens: The requested output limit. Defaults to
+            `DEFAULT_MAX_OUTPUT_TOKENS` when absent.
+        model: Recorded on the estimate when known.
+
+    Example:
+        >>> default_estimate("hello there", max_tokens=256)
+        Estimate(input=4, output=Distribution(kind='bounded', value=256), model=None)
+        >>> default_estimate([{"role": "user", "content": "hi"}], max_tokens=10).input
+        1
+        >>> default_estimate().output.value == DEFAULT_MAX_OUTPUT_TOKENS
+        True
+
+    Raises:
+        ValueError: if `max_tokens` is negative.
+    """
+    if max_tokens is not None and max_tokens < 0:
+        message = f"max_tokens cannot be negative, got {max_tokens}."
+        raise ValueError(message)
+    characters = _text_length(prompt) if prompt is not None else 0
+    reserved_output = DEFAULT_MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
+    return Estimate(
+        input=math.ceil(characters / CHARACTERS_PER_TOKEN),
+        output=Distribution.bounded_by(reserved_output),
+        model=model,
+    )

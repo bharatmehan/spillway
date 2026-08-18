@@ -16,6 +16,9 @@ version is below 0.1, any release may change anything.
 - `Distribution` and `Estimate`. Output length is predicted rather than known, so it is carried as
   a distribution with a `quantile` method. Two constructors for now: an exact point, and a worst
   case bound.
+- A default estimate function. Input tokens are counted with a documented character heuristic that
+  is accurate to roughly ten to fifteen percent, so the quickstart needs no tokenizer installed, and
+  the real figure replaces it at settlement.
 
 ### Changed
 
