@@ -190,3 +190,15 @@ async def test_a_plain_class_satisfies_the_asynchronous_protocol():
     assert await store.settle("lease-1", []) is None
     assert await store.release("lease-1") is None
     assert await store.snapshot([]) == {}
+
+
+def test_a_rate_claim_with_a_zero_limit_is_refused():
+    # A rate of zero per window has no emission interval, so there is nothing
+    # to charge against. A gauge limit of zero is different and is allowed:
+    # it means nothing may be in flight, which is a coherent thing to want.
+    with pytest.raises(ValueError, match="needs a positive limit"):
+        rate_claim(limit=0.0)
+
+
+def test_a_gauge_claim_with_a_zero_limit_is_allowed():
+    assert Claim("acme:generations", ClaimKind.GAUGE, cost=1.0, limit=0.0).limit == 0.0

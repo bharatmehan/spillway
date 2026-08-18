@@ -52,6 +52,9 @@ version is below 0.1, any release may change anything.
 - `Store` and `SyncStore` protocols. A store is asked for a whole batch of claims at once and
   applies all of them or none, which is the only way a request cannot be admitted against two
   limits and refused by the third with the first two already spent. One class may implement both.
+- `MemoryStore`, the default store. Zero configuration and zero dependencies, so the quickstart
+  runs on a clean environment. It is not safe across processes, and its docstring says so first:
+  four workers each running one enforce the full limit four times over.
 
 ### Changed
 

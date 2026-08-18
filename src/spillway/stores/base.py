@@ -69,8 +69,9 @@ class Claim:
         """Reject a claim no store could act on.
 
         Raises:
-            ValueError: if the cost or limit is negative, or if the window is
-                present on a gauge, absent on a rate claim, or not positive.
+            ValueError: if the cost is negative, if the limit is negative or
+                is not positive on a rate claim, or if the window is present
+                on a gauge, absent on a rate claim, or not positive.
         """
         if self.cost < 0:
             message = f"Claim cost cannot be negative, got {self.cost} for key {self.key!r}."
@@ -88,6 +89,13 @@ class Claim:
             if self.window_ms <= 0:
                 message = (
                     f"A rate window must be positive, got {self.window_ms} for key {self.key!r}."
+                )
+                raise ValueError(message)
+            if self.limit <= 0:
+                message = (
+                    f"A rate claim needs a positive limit, got {self.limit} for key "
+                    f"{self.key!r}. A rate of zero per window has no rate at all, so "
+                    f"there is no interval to charge against."
                 )
                 raise ValueError(message)
         elif self.window_ms is not None:
