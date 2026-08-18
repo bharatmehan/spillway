@@ -10,6 +10,9 @@ version is below 0.1, any release may change anything.
 - A `Clock` protocol with a monotonic implementation and a fake one that advances by hand. Every
   time reference in the library goes through it, which is what makes rate windows, lease expiry and
   feedback control testable without sleeping.
+- A `Cost` value type: input tokens, output tokens, requests, and provider specific extra
+  categories. Subtraction keeps the sign, because settlement is a difference and a negative
+  component is an overrun to repay rather than a number to discard.
 
 ### Changed
 
