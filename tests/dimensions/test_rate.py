@@ -5,7 +5,7 @@ import pytest
 from spillway.core.cost import Cost
 from spillway.core.errors import ConfigurationError
 from spillway.core.scope import Scope
-from spillway.dimensions.rate import Rate
+from spillway.dimensions.rate import INFERRED_METERS, Rate
 from spillway.stores.base import ClaimKind
 
 ACME = Scope("tenant:acme")
@@ -92,3 +92,47 @@ def test_a_rate_dimension_prints_its_configuration():
     assert repr(Rate("rpm", limit=1_000, meter="requests")) == (
         "Rate('rpm', limit=1000.0, meter='requests', window=60.0)"
     )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("rpm", "requests"),
+        ("rpd", "requests"),
+        ("input_tpm", "input_tokens"),
+        ("output_tpm", "output_tokens"),
+        ("tpm", "total_tokens"),
+    ],
+)
+def test_the_meter_is_inferred_for_the_widely_used_names(name, expected):
+    assert Rate(name, limit=1).meter == expected
+
+
+def test_every_inferred_name_is_actually_constructible():
+    for name in INFERRED_METERS:
+        assert Rate(name, limit=1).meter == INFERRED_METERS[name]
+
+
+def test_an_explicit_meter_overrides_the_inference():
+    # Someone whose provider calls its combined limit "tpm" but meters only
+    # input must be able to say so without renaming their dimension.
+    assert Rate("tpm", limit=1, meter="input_tokens").meter == "input_tokens"
+
+
+def test_an_unknown_name_without_a_meter_is_refused():
+    # Guessing here would meter the wrong thing silently, and that surfaces
+    # months later as unexplained rate limit responses from the provider.
+    with pytest.raises(ConfigurationError, match="cannot tell what to count"):
+        Rate("images_per_minute", limit=50)
+
+
+def test_the_refusal_lists_both_the_valid_meters_and_the_inferred_names():
+    with pytest.raises(ConfigurationError) as caught:
+        Rate("images_per_minute", limit=50)
+    message = str(caught.value)
+    assert "meter='requests'" in message
+    assert "input_tpm" in message
+
+
+def test_an_unknown_name_with_a_meter_is_accepted():
+    assert Rate("images_per_minute", limit=50, meter="requests").meter == "requests"

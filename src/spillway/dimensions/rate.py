@@ -15,6 +15,40 @@ from spillway.stores.base import Claim, ClaimKind, Delta
 
 _MS_PER_SECOND = 1000.0
 
+INFERRED_METERS: dict[str, Meter] = {
+    "rpm": "requests",
+    "rpd": "requests",
+    "input_tpm": "input_tokens",
+    "output_tpm": "output_tokens",
+    "tpm": "total_tokens",
+}
+"""Limit names common enough across providers that the meter is unambiguous.
+
+Any other name needs an explicit meter. Guessing from a name this table does not
+know would mean metering the wrong thing silently, and that surfaces months
+later as unexplained rate limit responses from the provider, which is close to
+undiagnosable from the outside.
+"""
+
+
+def _infer_meter(name: str) -> Meter:
+    """Work out what a limit counts from its name, or explain why it cannot.
+
+    Raises:
+        ConfigurationError: if the name is not one this library recognises.
+    """
+    meter = INFERRED_METERS.get(name)
+    if meter is None:
+        known = ", ".join(sorted(INFERRED_METERS))
+        message = (
+            f"Rate({name!r}) cannot tell what to count from its name, so it needs an "
+            f"explicit meter. Pass one of meter='requests', meter='input_tokens', "
+            f"meter='output_tokens' or meter='total_tokens'. The meter is inferred only "
+            f"for these names: {known}."
+        )
+        raise ConfigurationError(message)
+    return meter
+
 
 class Rate:
     """A limit on how much of something may be consumed per window.
@@ -24,7 +58,9 @@ class Rate:
             and `input_tpm`, and using the same name makes an explanation
             readable against the provider's own documentation.
         limit: How many units per window.
-        meter: Which part of a request's cost this limit counts.
+        meter: Which part of a request's cost this limit counts. Inferred from
+            the name for the widely used ones listed in `INFERRED_METERS`, and
+            required for anything else.
         window: The window in seconds. Sixty for a per minute limit.
         adaptive: Must be False. Present so that passing it produces an
             explanation rather than an unexpected keyword error.
@@ -32,7 +68,7 @@ class Rate:
     Example:
         >>> from spillway.core.cost import Cost
         >>> from spillway.core.scope import Scope
-        >>> tokens = Rate("input_tpm", limit=400_000, meter="input_tokens")
+        >>> tokens = Rate("input_tpm", limit=400_000)
         >>> claim = tokens.claim(Cost(input_tokens=8_600), Scope("tenant:acme"))
         >>> claim.key, claim.cost, claim.window_ms
         ('tenant:acme:input_tpm', 8600.0, 60000.0)
@@ -45,9 +81,14 @@ class Rate:
         >>> delta.amount
         400.0
 
+        A name outside the table needs to say what it counts.
+
+        >>> Rate("images_per_minute", limit=50, meter="requests").meter
+        'requests'
+
     Raises:
-        ConfigurationError: if the limit or window is not positive, or if
-            adaptive control was requested.
+        ConfigurationError: if the meter cannot be determined, if the limit or
+            window is not positive, or if adaptive control was requested.
     """
 
     kind = ClaimKind.RATE
@@ -57,8 +98,8 @@ class Rate:
         name: str,
         *,
         limit: float,
-        meter: Meter,
         window: float = 60.0,
+        meter: Meter | None = None,
         adaptive: bool = False,
     ) -> None:
         """Configure the limit, refusing a combination that cannot work."""
@@ -81,7 +122,7 @@ class Rate:
             raise ConfigurationError(message)
         self._name = name
         self._limit = float(limit)
-        self._meter: Meter = meter
+        self._meter: Meter = meter if meter is not None else _infer_meter(name)
         self._window_ms = float(window) * _MS_PER_SECOND
 
     @property

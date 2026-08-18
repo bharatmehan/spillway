@@ -44,6 +44,9 @@ version is below 0.1, any release may change anything.
   request's cost it counts, so a tokens per minute limit and a requests per minute limit can sit
   side by side without either counting the other's units. Asking for an adaptive rate limit is
   refused with an explanation rather than accepted.
+- The meter is inferred from the dimension name for `rpm`, `rpd`, `input_tpm`, `output_tpm` and
+  `tpm`, so the common case is one line. Any other name must say what it counts, because guessing
+  would meter the wrong thing silently.
 
 ### Changed
 
