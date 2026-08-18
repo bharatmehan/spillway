@@ -15,10 +15,17 @@ from spillway.stores.base import Utilisation
 
 
 def _number(value: float) -> str:
-    """Format a count without the noise of a trailing decimal on a whole number."""
-    if value == int(value):
-        return str(int(value))
-    return f"{value:.1f}"
+    """Format a count for reading, not for arithmetic.
+
+    A rate window replenishes continuously, so a key that is exactly full reads
+    back as 999.99997 a moment later. Printing that beside a limit of 1000 makes
+    a correct limiter look like a broken one, so counts are rounded to the same
+    precision they are shown at, and a whole number loses its decimal point.
+    """
+    rounded = round(value, 1)
+    if rounded == int(rounded):
+        return str(int(rounded))
+    return f"{rounded:.1f}"
 
 
 @dataclass(frozen=True)

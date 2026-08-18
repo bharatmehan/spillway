@@ -125,3 +125,16 @@ def test_the_controller_state_is_copied_rather_than_shared():
 def test_an_explanation_is_frozen():
     with pytest.raises(dataclasses.FrozenInstanceError):
         refusal().admitted = True
+
+
+def test_a_count_a_hair_under_its_limit_prints_as_the_limit():
+    # A rate window replenishes continuously, so a key that was exactly full a
+    # moment ago reads back as 999.99997. Printing that beside a limit of 1000
+    # makes a correct limiter look like a broken one.
+    text = str(refusal(dimensions={"rpm": Utilisation(used=999.99997, limit=1000.0)}))
+    assert "1000/1000" in text
+
+
+def test_a_genuinely_fractional_count_still_shows_its_fraction():
+    text = str(refusal(dimensions={"token_seconds": Utilisation(used=11.25, limit=20.0)}))
+    assert "11.2/20" in text

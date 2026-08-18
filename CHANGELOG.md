@@ -95,6 +95,12 @@ version is below 0.1, any release may change anything.
   needs an explicit submodule import, so what an editor offers at the top level is what is
   supported.
 
+### Fixed
+
+- An explanation no longer prints a count as `1000.0/1000`. A rate window replenishes continuously,
+  so a key that was exactly full a moment ago reads back a hair under, and showing that beside its
+  limit made a correct limiter look like a broken one.
+
 ### Changed
 
 - Async tests need no decorator. The library's entry point is asynchronous, so an async test is the
