@@ -58,6 +58,9 @@ version is below 0.1, any release may change anything.
 - Leases that are never settled are reclaimed once they outlive their expiry, so a process that
   dies mid request cannot leak a gauge. Only gauges come back: a rate charge was really spent, and
   inventing a refund would let a crashing worker exceed a provider's limit indefinitely.
+- A warning, once per process, when an in memory store is used and the process looks like one of
+  several workers. The overshoot this causes appears at the provider, and nothing locally points at
+  the cause, so the warning is the only thing that connects the two.
 
 ### Changed
 

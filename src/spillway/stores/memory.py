@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import heapq
 import itertools
+import logging
+import os
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -28,6 +31,61 @@ from spillway.stores.base import (
     ReserveResult,
     Utilisation,
 )
+
+_log = logging.getLogger(__name__)
+
+_warned_about_workers = False
+
+
+# ponytail: a handful of strong signals, and it will miss deployment shapes it
+# has never heard of. Nothing better is obviously available from inside a worker
+# process, and a missed warning is no worse than the silence there would
+# otherwise be. Add a signal when a real deployment goes undetected, not on
+# speculation.
+def multi_worker_hint() -> str | None:
+    """Return what suggests this process is one of several, or None if nothing does.
+
+    Example:
+        >>> import os
+        >>> os.environ["WEB_CONCURRENCY"] = "4"
+        >>> multi_worker_hint()
+        'WEB_CONCURRENCY is set to 4'
+        >>> del os.environ["WEB_CONCURRENCY"]
+    """
+    software = os.environ.get("SERVER_SOFTWARE", "").lower()
+    if "gunicorn" in software:
+        return "SERVER_SOFTWARE names gunicorn"
+    if "uwsgi" in software or "uwsgi" in sys.modules:
+        return "this process is running under uWSGI"
+    concurrency = os.environ.get("WEB_CONCURRENCY", "")
+    if concurrency.isdigit() and int(concurrency) > 1:
+        return f"WEB_CONCURRENCY is set to {concurrency}"
+    return None
+
+
+def _warn_once_about_workers() -> None:
+    """Say something the first time an in memory store is used across workers.
+
+    Once per process, and loudly. Silently enforcing the full limit in each of
+    several workers is the single most likely way someone concludes this library
+    does not work, because the overshoot appears at the provider and nothing
+    locally points at the cause.
+    """
+    global _warned_about_workers
+    if _warned_about_workers:
+        return
+    hint = multi_worker_hint()
+    if hint is None:
+        return
+    _warned_about_workers = True
+    _log.warning(
+        "MemoryStore is in use and this process looks like one of several (%s). Each "
+        "process enforces the whole limit on its own, so total consumption will "
+        "overshoot by roughly the number of workers and the provider will start "
+        "refusing requests. Point every worker at one shared store, or run a single "
+        "process.",
+        hint,
+    )
 
 
 @dataclass(frozen=True)
@@ -129,6 +187,7 @@ class MemoryStore:
         priority: int,
     ) -> ReserveResult:
         """Apply every claim, or none of them. See `Store.reserve`."""
+        _warn_once_about_workers()
         with self._lock:
             now_ms = self._clock.now_ms()
             self._reap(now_ms)
