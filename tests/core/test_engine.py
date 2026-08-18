@@ -108,8 +108,10 @@ def test_a_credit_rewinds_the_arrival_time_by_what_was_returned():
 
 
 def test_a_credit_never_rewinds_into_the_past():
-    # Without this clamp an idle key would bank credit and then admit a burst
-    # far larger than its limit, which is the failure the limiter exists to stop.
+    # Not what bounds a burst: gcra_reserve pulls the arrival time up to now
+    # before charging, so it would ignore a value in the past anyway. This keeps
+    # the stored number bounded, so a long lived key that credits back more than
+    # it charges does not drift into the past for ever and lose precision.
     assert gcra_credit(BURST, 0.0, 5.0, INTERVAL) == 0.0
 
 

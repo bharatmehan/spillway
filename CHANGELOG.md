@@ -86,6 +86,10 @@ version is below 0.1, any release may change anything.
 - Property based testing, with a fixed seed in continuous integration and a random one locally. A
   fixed seed makes a red build reproducible on the machine of whoever has to fix it; a random one
   keeps the suite exploring rather than re examining the same cases for ever.
+- Property tests for the six invariants the design rests on: reserve then release leaves no trace,
+  settlement lands on the actual cost, a denied reservation consumes nothing, concurrent callers
+  never exceed a limit in aggregate, no sliding window ever exceeds the rate, and outstanding
+  leases sum to the gauge that is held.
 
 ### Changed
 

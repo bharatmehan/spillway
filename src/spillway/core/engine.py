@@ -64,6 +64,11 @@ def gcra_reserve(
         still mutates nothing. That is what makes an all or nothing batch of
         claims safe to evaluate one at a time.
 
+    The first two lines are what bound a burst. Pulling the arrival time up to
+    now before charging means a key that has been idle for an hour gets one
+    window of allowance rather than an hour of it, which is the difference
+    between a limiter and a counter that occasionally lets everything through.
+
     Example:
         A limit of two per second, so one unit of cost buys 500ms and a key may
         run 1000ms ahead. Two charges fit at once and the third does not.
@@ -101,13 +106,17 @@ def gcra_credit(
 ) -> float:
     """Return unused capacity to a rate key.
 
-    Crediting back is a rewind of the arrival time, clamped so that it never
-    rewinds into the past. The clamp matters: without it, a key that has been
-    idle would bank credit and then admit a burst far larger than its limit.
+    Crediting back is a rewind of the arrival time. This is what makes reserving
+    conservatively affordable: capacity held on an estimate and not used is
+    returned within the request's own lifetime, so it is available to the next
+    caller rather than wasted until the window rolls.
 
-    This is what makes reserving conservatively affordable. Capacity held on an
-    estimate and not used is returned within the request's own lifetime, so it
-    is available to the next caller rather than wasted until the window rolls.
+    The rewind stops at the present moment. That floor is not what bounds a
+    burst, since `gcra_reserve` pulls the arrival time up to now before charging
+    anything and would ignore a value in the past anyway. It is here to keep the
+    stored number bounded: a long lived key that credited back more than it
+    charged would otherwise drift further into the past for ever, losing float
+    precision as it went and misleading anything that read it directly.
 
     Args:
         tat_ms: The key's stored theoretical arrival time.
