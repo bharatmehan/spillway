@@ -181,3 +181,12 @@ def test_one_class_can_satisfy_both_protocols_at_once():
     synchronous: SyncStore = store
     asynchronous: Store = store
     assert synchronous is asynchronous
+
+
+async def test_a_plain_class_satisfies_the_asynchronous_protocol():
+    store: Store = GrantsEverything()
+    result = await store.reserve([], ttl_ms=60_000.0, scope="acme", priority=0)
+    assert result.granted
+    assert await store.settle("lease-1", []) is None
+    assert await store.release("lease-1") is None
+    assert await store.snapshot([]) == {}

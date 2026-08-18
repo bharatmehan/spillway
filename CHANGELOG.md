@@ -55,6 +55,8 @@ version is below 0.1, any release may change anything.
 
 ### Changed
 
+- Async tests need no decorator. The library's entry point is asynchronous, so an async test is the
+  ordinary case here rather than the exception.
 - The test run now executes every example in a docstring. A public docstring example is the first
   thing a reader copies, so an example that has stopped working is a defect rather than a typo.
 

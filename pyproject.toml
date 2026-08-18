@@ -53,6 +53,7 @@ required-version = ">=0.12.5,<0.13"
 dev = [
     "mypy>=1.18",
     "pytest>=8.4",
+    "pytest-asyncio>=1.0",
     "ruff>=0.16",
 ]
 
@@ -111,6 +112,10 @@ enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "src"]
 addopts = "--strict-markers --strict-config --doctest-modules"
+# Async tests need no decorator. The library's own entry point is asynchronous,
+# so an async test is the ordinary case here rather than the exception.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "redis: needs a running coordination store",
     "slow: takes more than a second",
