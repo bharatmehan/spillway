@@ -23,13 +23,13 @@ jobs:
       - name: Confirm the tag matches the packaged version
         run: |
           tagged="${GITHUB_REF_NAME#v}"
-          packaged=$(uv version --package spillway --short)
+          packaged=$(uv version --short)
           test "$tagged" = "$packaged" || {
             echo "tag $GITHUB_REF_NAME does not match packaged version $packaged"
             exit 1
           }
 
-      - run: uv build --package spillway
+      - run: uv build
 
       - name: Install the built wheel into a clean environment and import it
         run: |

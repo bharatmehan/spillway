@@ -6,18 +6,6 @@ resolution-markers = [
     "python_full_version < '3.15'",
 ]
 
-[manifest]
-members = [
-    "spillway",
-]
-
-[manifest.dependency-groups]
-dev = [
-    { name = "mypy", specifier = ">=1.18" },
-    { name = "pytest", specifier = ">=8.4" },
-    { name = "ruff", specifier = ">=0.16" },
-]
-
 [[package]]
 name = "ast-serialize"
 version = "0.8.0"
@@ -400,7 +388,23 @@ wheels = [
 [[package]]
 name = "spillway"
 version = "0.0.1"
-source = { editable = "packages/spillway" }
+source = { editable = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.18" },
+    { name = "pytest", specifier = ">=8.4" },
+    { name = "ruff", specifier = ">=0.16" },
+]
 
 [[package]]
 name = "tomli"

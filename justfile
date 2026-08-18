@@ -1,7 +1,7 @@
 default:
     @just --list
 
-# Create the environment and install every workspace member.
+# Create the environment and install the project.
 setup:
     uv sync
 
@@ -28,4 +28,4 @@ test-fast:
 check: lint types test-fast
 
 build:
-    uv build --package spillway
+    uv build

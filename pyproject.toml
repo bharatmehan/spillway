@@ -1,12 +1,53 @@
+[project]
+name = "spillway"
+version = "0.0.1"
+description = "Congestion control for language model API traffic"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+    { name = "Bharat Mehan", email = "40287314+bharatmehan@users.noreply.github.com" },
+]
+keywords = [
+    "admission-control",
+    "concurrency",
+    "congestion-control",
+    "llm",
+    "rate-limiting",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/bharatmehan/spillway"
+Repository = "https://github.com/bharatmehan/spillway"
+Changelog = "https://github.com/bharatmehan/spillway/blob/main/CHANGELOG.md"
+Issues = "https://github.com/bharatmehan/spillway/issues"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13"]
+build-backend = "uv_build"
+
 [tool.uv]
 # One source of truth for the tool version, read both by uv locally and by the setup action
 # in continuous integration. Without it, a contributor's uv and the one in the workflow can
 # be months apart, and the promise that a green `just check` means a green build is only
 # true by luck. The lockfile is used frozen, so the resolver version is load bearing.
 required-version = ">=0.12.5,<0.13"
-
-[tool.uv.workspace]
-members = ["packages/*"]
 
 [dependency-groups]
 dev = [
@@ -18,7 +59,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-src = ["packages/spillway/src", "packages/spillway/tests"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -52,17 +93,17 @@ convention = "google"
 ban-relative-imports = "parents"
 
 [tool.ruff.lint.per-file-ignores]
-"packages/*/tests/**" = ["ANN", "D", "S101"]
+"tests/**" = ["ANN", "D", "S101"]
 
 [tool.mypy]
 python_version = "3.10"
 strict = true
-files = ["packages/spillway/src"]
+files = ["src"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/spillway/tests"]
+testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
 markers = [
     "redis: needs a running coordination store",
