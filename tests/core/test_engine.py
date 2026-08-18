@@ -5,7 +5,13 @@ language, so their behaviour at the edges is a specification rather than an
 accident.
 """
 
-from spillway.core.engine import gcra_credit, gcra_debt, gcra_reserve
+from spillway.core.engine import (
+    gauge_release,
+    gauge_reserve,
+    gcra_credit,
+    gcra_debt,
+    gcra_reserve,
+)
 
 # A limit of two per second: one unit of cost buys 500ms, and a key may run one
 # window ahead of now.
@@ -149,3 +155,45 @@ def test_a_key_in_debt_refuses_until_the_debt_is_paid():
     granted, _tat, retry_after = gcra_reserve(tat, 0.0, 1.0, INTERVAL, BURST)
     assert not granted
     assert retry_after == 1500.0
+
+
+def test_a_gauge_grants_while_there_is_room():
+    assert gauge_reserve(0.0, 1.0, 64.0) == (True, 1.0)
+
+
+def test_a_gauge_grants_the_unit_that_reaches_the_limit_exactly():
+    # At the limit is not over the limit. Refusing here would make every gauge
+    # one smaller than configured.
+    assert gauge_reserve(63.0, 1.0, 64.0) == (True, 64.0)
+
+
+def test_a_gauge_refuses_the_unit_that_would_exceed_the_limit():
+    assert gauge_reserve(64.0, 1.0, 64.0) == (False, 64.0)
+
+
+def test_a_refused_gauge_returns_the_held_value_unchanged():
+    assert gauge_reserve(60.0, 100.0, 64.0) == (False, 60.0)
+
+
+def test_a_zero_cost_gauge_claim_is_granted_even_when_full():
+    assert gauge_reserve(64.0, 0.0, 64.0) == (True, 64.0)
+
+
+def test_a_gauge_with_a_zero_limit_refuses_everything_that_costs_anything():
+    assert gauge_reserve(0.0, 1.0, 0.0) == (False, 0.0)
+
+
+def test_releasing_gives_back_exactly_what_was_taken():
+    _granted, held = gauge_reserve(10.0, 1.0, 64.0)
+    assert gauge_release(held, 1.0) == 10.0
+
+
+def test_releasing_more_than_is_held_stops_at_zero():
+    # A gauge below zero would admit more than its limit. Accumulated floating
+    # point error over millions of settlements can get there with no single
+    # mistake, so the clamp is not defensive programming, it is the invariant.
+    assert gauge_release(1.0, 5.0) == 0.0
+
+
+def test_releasing_nothing_changes_nothing():
+    assert gauge_release(12.0, 0.0) == 12.0

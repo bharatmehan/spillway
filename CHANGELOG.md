@@ -30,6 +30,9 @@ version is below 0.1, any release may change anything.
 - Credit and debt arithmetic for rate keys. Unused capacity is returned within a request's own
   lifetime, which is what makes reserving conservatively affordable, and an overrun becomes debt
   repaid from the next window, bounded so one bad estimate cannot silence a scope for hours.
+- Gauge arithmetic, for limits on a value currently held rather than consumed over a window.
+  Concurrency is one. Releasing is clamped at zero, because a gauge below zero would admit more
+  than its limit.
 
 ### Changed
 

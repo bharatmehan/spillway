@@ -29,6 +29,13 @@ Two derived values, both computed by the caller:
 
     emission_interval_ms = window_ms / limit    time one unit of cost buys
     burst_ms             = window_ms            how far ahead a key may run
+
+## Gauge accounting
+
+Gauges are the other kind of limit: a value currently held, released explicitly
+when the request that took it finishes. Concurrency is one. They are genuinely
+different from rate keys, which are never released and simply age out, and
+conflating the two produces either leaked concurrency or double counted rate.
 """
 
 from __future__ import annotations
@@ -175,3 +182,54 @@ def gcra_debt(
     if new_tat_ms > ceiling_ms:
         new_tat_ms = ceiling_ms
     return new_tat_ms
+
+
+def gauge_reserve(held: float, cost: float, limit: float) -> tuple[bool, float]:
+    """Take `cost` from a gauge, if it fits.
+
+    Args:
+        held: How much of the gauge is currently held.
+        cost: How much to take.
+        limit: The most that may be held at once.
+
+    Returns:
+        Whether it was granted, and the value to store. As with a rate charge, a
+        refusal returns the held value unchanged, so a caller evaluating a batch
+        of claims one at a time still mutates nothing when one of them refuses.
+
+    Example:
+        >>> gauge_reserve(63.0, 1.0, 64.0)
+        (True, 64.0)
+        >>> gauge_reserve(64.0, 1.0, 64.0)
+        (False, 64.0)
+    """
+    new_held = held + cost
+    if new_held > limit:
+        return False, held
+    return True, new_held
+
+
+def gauge_release(held: float, amount: float) -> float:
+    """Give `amount` back to a gauge.
+
+    Clamped at zero. A gauge below zero would admit more than its limit, and
+    accumulated floating point error over millions of settlements is a real way
+    to get there without any single mistake.
+
+    Args:
+        held: How much of the gauge is currently held.
+        amount: How much to give back.
+
+    Returns:
+        The value to store.
+
+    Example:
+        >>> gauge_release(64.0, 1.0)
+        63.0
+        >>> gauge_release(1.0, 5.0)
+        0.0
+    """
+    new_held = held - amount
+    if new_held < 0.0:
+        new_held = 0.0
+    return new_held
