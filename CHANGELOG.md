@@ -11,6 +11,11 @@ version is below 0.1, any release may change anything.
   time reference in the library goes through it, which is what makes rate windows, lease expiry and
   feedback control testable without sleeping.
 
+### Changed
+
+- The test run now executes every example in a docstring. A public docstring example is the first
+  thing a reader copies, so an example that has stopped working is a defect rather than a typo.
+
 ## 0.0.1 (2026-08-17)
 
 ### Added

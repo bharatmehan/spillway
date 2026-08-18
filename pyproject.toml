@@ -103,8 +103,8 @@ warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "--strict-markers --strict-config"
+testpaths = ["tests", "src"]
+addopts = "--strict-markers --strict-config --doctest-modules"
 markers = [
     "redis: needs a running coordination store",
     "slow: takes more than a second",
