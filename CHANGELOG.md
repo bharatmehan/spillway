@@ -90,6 +90,10 @@ version is below 0.1, any release may change anything.
   settlement lands on the actual cost, a denied reservation consumes nothing, concurrent callers
   never exceed a limit in aggregate, no sliding window ever exceeds the rate, and outstanding
   leases sum to the gauge that is held.
+- A curated top level export list: `Spillway`, `Scope`, `Priority`, `Rate`, `Concurrency`, `Cost`,
+  `Estimate`, `Distribution`, `Lease`, `LeaseState` and the exception hierarchy. Everything else
+  needs an explicit submodule import, so what an editor offers at the top level is what is
+  supported.
 
 ### Changed
 
