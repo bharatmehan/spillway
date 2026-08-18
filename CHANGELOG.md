@@ -19,6 +19,8 @@ version is below 0.1, any release may change anything.
 - A default estimate function. Input tokens are counted with a documented character heuristic that
   is accurate to roughly ten to fifteen percent, so the quickstart needs no tokenizer installed, and
   the real figure replaces it at settlement.
+- `Scope` and `Priority`. A scope is the key every limit is tracked against; a priority is an
+  ordinary integer, with four named conventions, where negative means the work is sheddable.
 
 ### Changed
 
