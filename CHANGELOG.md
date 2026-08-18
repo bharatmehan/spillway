@@ -65,6 +65,10 @@ version is below 0.1, any release may change anything.
   not just the one that ran out, because seeing what was not full is what tells someone the limit
   they were about to raise is not the one actually binding. It prints readably and converts to
   plain data.
+- `Lease` and `LeaseState`. Settling reports the real cost and returns the difference immediately,
+  so reserving conservatively costs nothing in steady state. Settling twice raises rather than
+  counting the same request twice; abandoning twice does nothing, because it runs on the failure
+  path where a second error buries the first.
 
 ### Changed
 
