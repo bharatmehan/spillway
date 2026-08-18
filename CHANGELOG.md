@@ -33,6 +33,9 @@ version is below 0.1, any release may change anything.
 - Gauge arithmetic, for limits on a value currently held rather than consumed over a window.
   Concurrency is one. Releasing is clamped at zero, because a gauge below zero would admit more
   than its limit.
+- The types a store speaks in: `Claim`, `Delta`, `Utilisation` and `ReserveResult`. A refusal names
+  the key that bound and how long until it would not have, because a bare yes or no cannot be
+  explained to a user and forces a caller to poll.
 
 ### Changed
 

@@ -1,0 +1,239 @@
+"""The vocabulary a store speaks.
+
+A store answers one question: may this request take all of this capacity, right
+now, and if not then what stopped it and for how long. Everything here exists to
+make that question askable in a single call.
+
+The types are deliberately dull. They cross the boundary into an implementation
+that may be a dictionary in this process or a script running on another machine,
+so they carry numbers and strings and nothing that only makes sense in Python.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class ClaimKind(Enum):
+    """Which of the two kinds of limit a claim is against.
+
+    They behave differently enough that the difference is part of the type
+    rather than something a store has to infer. A rate claim is never given
+    back, it ages out as time passes. A gauge claim is held until the request
+    that took it settles or expires. Treating one as the other leaks concurrency
+    in one direction and double counts rate in the other.
+
+    Example:
+        >>> ClaimKind.RATE.value
+        'rate'
+    """
+
+    RATE = "rate"
+    """Consumption over a rolling window, replenished by the passage of time."""
+
+    GAUGE = "gauge"
+    """A value currently held, given back explicitly when the request finishes."""
+
+
+@dataclass(frozen=True)
+class Claim:
+    """A request for some capacity on one key.
+
+    Attributes:
+        key: What the capacity is drawn from, scope included, such as
+            `"tenant:acme:input_tpm"`. Opaque to the store.
+        kind: Whether this is consumed over a window or held.
+        cost: How much to take.
+        limit: The most this key may hold or consume per window.
+        window_ms: The window length for a rate claim. Absent for a gauge,
+            which has no window.
+
+    Example:
+        >>> rate = Claim("acme:rpm", ClaimKind.RATE, cost=1.0, limit=1000.0, window_ms=60_000.0)
+        >>> rate.key, rate.cost, rate.window_ms
+        ('acme:rpm', 1.0, 60000.0)
+        >>> Claim("acme:generations", ClaimKind.GAUGE, cost=1.0, limit=64.0).window_ms is None
+        True
+    """
+
+    key: str
+    kind: ClaimKind
+    cost: float
+    limit: float
+    window_ms: float | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a claim no store could act on.
+
+        Raises:
+            ValueError: if the cost or limit is negative, or if the window is
+                present on a gauge, absent on a rate claim, or not positive.
+        """
+        if self.cost < 0:
+            message = f"Claim cost cannot be negative, got {self.cost} for key {self.key!r}."
+            raise ValueError(message)
+        if self.limit < 0:
+            message = f"Claim limit cannot be negative, got {self.limit} for key {self.key!r}."
+            raise ValueError(message)
+        if self.kind is ClaimKind.RATE:
+            if self.window_ms is None:
+                message = (
+                    f"A rate claim needs a window, and key {self.key!r} has none. "
+                    f"Pass window_ms, or use ClaimKind.GAUGE if this is a held value."
+                )
+                raise ValueError(message)
+            if self.window_ms <= 0:
+                message = (
+                    f"A rate window must be positive, got {self.window_ms} for key {self.key!r}."
+                )
+                raise ValueError(message)
+        elif self.window_ms is not None:
+            message = (
+                f"A gauge claim has no window, but key {self.key!r} was given "
+                f"window_ms={self.window_ms}. Drop it, or use ClaimKind.RATE."
+            )
+            raise ValueError(message)
+
+
+@dataclass(frozen=True)
+class Delta:
+    """A correction to apply to one key once the real cost is known.
+
+    The sign is the whole point. Positive means capacity was reserved and not
+    used, so it goes back. Negative means more was used than reserved, so it is
+    owed. Both happen constantly, because output length is predicted rather than
+    known, and a settlement path that could only express one of them would
+    either waste capacity or quietly break the limit.
+
+    Example:
+        >>> Delta("acme:output_tpm", ClaimKind.RATE, amount=765.0).amount
+        765.0
+        >>> Delta("acme:output_tpm", ClaimKind.RATE, amount=-150.0).amount
+        -150.0
+    """
+
+    key: str
+    kind: ClaimKind
+    amount: float
+
+
+@dataclass(frozen=True)
+class Utilisation:
+    """How full one key is.
+
+    Reported for every key a reservation touched, on refusal as well as on
+    success, so that explaining a decision never costs a second round trip.
+
+    Example:
+        >>> used = Utilisation(used=412.0, limit=1000.0)
+        >>> round(used.headroom, 3)
+        0.588
+        >>> Utilisation(used=64.0, limit=64.0).headroom
+        0.0
+    """
+
+    used: float
+    limit: float
+
+    @property
+    def headroom(self) -> float:
+        """The fraction of this key still free, from 1.0 down to 0.0.
+
+        A property rather than a stored field so it cannot drift away from the
+        two numbers it is derived from. A limit of zero reports no headroom,
+        which is true, rather than dividing by zero.
+        """
+        if self.limit <= 0:
+            return 0.0
+        free = (self.limit - self.used) / self.limit
+        if free < 0.0:
+            return 0.0
+        return free
+
+
+@dataclass(frozen=True)
+class ReserveResult:
+    """What a store says when asked for capacity.
+
+    A bare yes or no is not enough. A refusal that does not say which key ran
+    out cannot be explained to a user, and one that does not say how long to
+    wait forces a caller to poll.
+
+    Attributes:
+        granted: Whether all the claims were applied.
+        lease_id: Identifies the reservation, for settling or releasing it
+            later. Present exactly when granted.
+        binding_key: The first key that refused. Present exactly when refused.
+        retry_after_ms: How long until the binding key could grant the same
+            claim, or None when waiting would not help.
+        utilisation: Every key the reservation touched, in both outcomes.
+
+    Example:
+        >>> refusal = ReserveResult.refused("acme:rpm", retry_after_ms=500.0)
+        >>> refusal.granted, refusal.binding_key, refusal.retry_after_ms
+        (False, 'acme:rpm', 500.0)
+        >>> ReserveResult.granted_as("lease-1").granted
+        True
+    """
+
+    granted: bool
+    lease_id: str | None = None
+    binding_key: str | None = None
+    retry_after_ms: float | None = None
+    utilisation: Mapping[str, Utilisation] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Reject a result that says two contradictory things.
+
+        A store is an extension point, so this catches a third party
+        implementation returning a shape the rest of the library would
+        misread, at the point of the mistake rather than three frames later.
+
+        Raises:
+            ValueError: if the result is internally inconsistent.
+        """
+        if self.granted:
+            if self.lease_id is None:
+                message = "A granted reservation must carry a lease_id to settle it with."
+                raise ValueError(message)
+            if self.binding_key is not None:
+                message = (
+                    f"A granted reservation cannot have a binding key, got {self.binding_key!r}."
+                )
+                raise ValueError(message)
+        else:
+            if self.lease_id is not None:
+                message = f"A refused reservation cannot have a lease_id, got {self.lease_id!r}."
+                raise ValueError(message)
+            if self.binding_key is None:
+                message = (
+                    "A refused reservation must name the key that refused. Without it "
+                    "the refusal cannot be explained and a waiter cannot be scheduled."
+                )
+                raise ValueError(message)
+
+    @classmethod
+    def granted_as(
+        cls,
+        lease_id: str,
+        utilisation: Mapping[str, Utilisation] | None = None,
+    ) -> ReserveResult:
+        """Build the result of a successful reservation."""
+        return cls(granted=True, lease_id=lease_id, utilisation=utilisation or {})
+
+    @classmethod
+    def refused(
+        cls,
+        binding_key: str,
+        retry_after_ms: float | None = None,
+        utilisation: Mapping[str, Utilisation] | None = None,
+    ) -> ReserveResult:
+        """Build the result of a refused reservation."""
+        return cls(
+            granted=False,
+            binding_key=binding_key,
+            retry_after_ms=retry_after_ms,
+            utilisation=utilisation or {},
+        )
