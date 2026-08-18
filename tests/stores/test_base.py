@@ -2,7 +2,15 @@
 
 import pytest
 
-from spillway.stores.base import Claim, ClaimKind, Delta, ReserveResult, Utilisation
+from spillway.stores.base import (
+    Claim,
+    ClaimKind,
+    Delta,
+    ReserveResult,
+    Store,
+    SyncStore,
+    Utilisation,
+)
 
 
 def rate_claim(**overrides):
@@ -129,3 +137,47 @@ def test_a_refused_result_without_a_binding_key_is_refused_at_construction():
 
 def test_a_refusal_may_have_no_retry_after_when_waiting_would_not_help():
     assert ReserveResult.refused("acme:budget").retry_after_ms is None
+
+
+class GrantsEverything:
+    """A store with no limits, implementing both protocols from one class."""
+
+    def reserve_sync(self, claims, *, ttl_ms, scope, priority):
+        return ReserveResult.granted_as("lease-1")
+
+    def settle_sync(self, lease_id, deltas):
+        return None
+
+    def release_sync(self, lease_id):
+        return None
+
+    def snapshot_sync(self, keys):
+        return {}
+
+    async def reserve(self, claims, *, ttl_ms, scope, priority):
+        return self.reserve_sync(claims, ttl_ms=ttl_ms, scope=scope, priority=priority)
+
+    async def settle(self, lease_id, deltas):
+        return self.settle_sync(lease_id, deltas)
+
+    async def release(self, lease_id):
+        return self.release_sync(lease_id)
+
+    async def snapshot(self, keys):
+        return self.snapshot_sync(keys)
+
+
+def test_a_plain_class_satisfies_the_synchronous_protocol():
+    store: SyncStore = GrantsEverything()
+    result = store.reserve_sync([], ttl_ms=60_000.0, scope="acme", priority=0)
+    assert result.granted
+
+
+def test_one_class_can_satisfy_both_protocols_at_once():
+    # The suffixed names exist so that a store whose critical section is pure
+    # arithmetic can implement the synchronous side for real and delegate the
+    # asynchronous side, rather than writing the logic twice.
+    store = GrantsEverything()
+    synchronous: SyncStore = store
+    asynchronous: Store = store
+    assert synchronous is asynchronous

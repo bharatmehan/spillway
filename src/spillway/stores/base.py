@@ -11,9 +11,10 @@ so they carry numbers and strings and nothing that only makes sense in Python.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Protocol
 
 
 class ClaimKind(Enum):
@@ -237,3 +238,142 @@ class ReserveResult:
             retry_after_ms=retry_after_ms,
             utilisation=utilisation or {},
         )
+
+
+class Store(Protocol):
+    """Where reservations are recorded, asked for capacity one batch at a time.
+
+    The batch is the whole design. A store is never asked about one key,
+    because a request admitted against two limits and refused by the third
+    would leave the first two wrongly consumed, and that is precisely the
+    overshoot this library exists to prevent. So the entire set of claims goes
+    in together and either all of it applies or none of it does.
+
+    Implement this to coordinate through something this library does not ship.
+    The hard part is not the interface, it is the atomicity: `reserve` must be
+    indivisible with respect to every other caller.
+
+    Example:
+        A store that grants everything, which is what a limiter with no limits
+        configured effectively has.
+
+        >>> import asyncio
+        >>> class Unlimited:
+        ...     async def reserve(self, claims, *, ttl_ms, scope, priority):
+        ...         return ReserveResult.granted_as("lease-1")
+        ...
+        ...     async def settle(self, lease_id, deltas):
+        ...         return None
+        ...
+        ...     async def release(self, lease_id):
+        ...         return None
+        ...
+        ...     async def snapshot(self, keys):
+        ...         return {}
+        >>> store: Store = Unlimited()
+        >>> asyncio.run(store.reserve([], ttl_ms=60_000.0, scope="acme", priority=0)).granted
+        True
+    """
+
+    async def reserve(
+        self,
+        claims: Sequence[Claim],
+        *,
+        ttl_ms: float,
+        scope: str,
+        priority: int,
+    ) -> ReserveResult:
+        """Apply every claim, or none of them.
+
+        Args:
+            claims: The complete set of claims for one admission.
+            ttl_ms: How long the reservation may go unsettled before its
+                capacity is reclaimed. A process that dies mid request must not
+                hold a gauge for ever.
+            scope: Which caller this is for. Used for lease bookkeeping; the
+                claims already carry scoped keys.
+            priority: How urgent the request is.
+
+        Returns:
+            A granted result carrying a lease identifier, or a refusal naming
+            the key that bound and how long until it would not have. Either
+            way, utilisation for every key touched, so that explaining the
+            decision costs no second round trip.
+        """
+        ...
+
+    async def settle(self, lease_id: str, deltas: Sequence[Delta]) -> None:
+        """Apply the corrections for a finished request and end its lease.
+
+        Gauges held by the lease are given back. Rate keys are credited or put
+        into debt according to the sign of each delta.
+        """
+        ...
+
+    async def release(self, lease_id: str) -> None:
+        """End a lease and return its whole reservation, correcting nothing.
+
+        For a request that never ran: it raised, or it was cancelled. Nothing
+        was consumed, so nothing is reconciled.
+        """
+        ...
+
+    async def snapshot(self, keys: Sequence[str]) -> Mapping[str, Utilisation]:
+        """Report how full each key is, without reserving anything.
+
+        Cheap and safe to call from a health check.
+        """
+        ...
+
+
+class SyncStore(Protocol):
+    """The same four operations, for callers with no event loop.
+
+    A store may implement this, the asynchronous protocol, or both. The two are
+    kept separate rather than merged because their implementations genuinely
+    differ: a store that talks over a network has real waiting to do, while one
+    that keeps a dictionary in this process does not and would only be pretending.
+
+    The names carry a suffix so that one class can implement both protocols
+    without either shadowing the other.
+
+    Example:
+        >>> class Unlimited:
+        ...     def reserve_sync(self, claims, *, ttl_ms, scope, priority):
+        ...         return ReserveResult.granted_as("lease-1")
+        ...
+        ...     def settle_sync(self, lease_id, deltas):
+        ...         return None
+        ...
+        ...     def release_sync(self, lease_id):
+        ...         return None
+        ...
+        ...     def snapshot_sync(self, keys):
+        ...         return {}
+        >>> store: SyncStore = Unlimited()
+        >>> store.reserve_sync([], ttl_ms=60_000.0, scope="acme", priority=0).granted
+        True
+    """
+
+    def reserve_sync(
+        self,
+        claims: Sequence[Claim],
+        *,
+        ttl_ms: float,
+        scope: str,
+        priority: int,
+    ) -> ReserveResult:
+        """Apply every claim, or none of them. See `Store.reserve`."""
+        ...
+
+    def settle_sync(self, lease_id: str, deltas: Sequence[Delta]) -> None:
+        """Apply corrections and end the lease. See `Store.settle`."""
+        ...
+
+    def release_sync(self, lease_id: str) -> None:
+        """Return the whole reservation and end the lease. See `Store.release`."""
+        ...
+
+    def snapshot_sync(self, keys: Sequence[str]) -> Mapping[str, Utilisation]:
+        """Report how full each key is. See `Store.snapshot`."""
+        ...

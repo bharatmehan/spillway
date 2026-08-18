@@ -49,6 +49,9 @@ version is below 0.1, any release may change anything.
   would meter the wrong thing silently.
 - A `Concurrency` dimension, limiting how many requests are in flight at once. One request takes
   one slot whatever it costs, and gets it back whole at settlement however wrong the estimate was.
+- `Store` and `SyncStore` protocols. A store is asked for a whole batch of claims at once and
+  applies all of them or none, which is the only way a request cannot be admitted against two
+  limits and refused by the third with the first two already spent. One class may implement both.
 
 ### Changed
 
