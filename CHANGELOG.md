@@ -69,6 +69,12 @@ version is below 0.1, any release may change anything.
   so reserving conservatively costs nothing in steady state. Settling twice raises rather than
   counting the same request twice; abandoning twice does nothing, because it runs on the failure
   path where a second error buries the first.
+- `Spillway`, the limiter itself, with a non blocking `admit`. Every argument has a default and
+  `Spillway()` with none is valid: it tracks and reports and refuses nothing, which is a reasonable
+  first step for someone gathering evidence before choosing limits. A refusal names the dimension
+  the caller configured rather than an internal store key, reports the wait in seconds, and carries
+  how full every limit was. A plain `with` statement refuses and names the asynchronous form rather
+  than starting an event loop on the caller's behalf.
 
 ### Changed
 

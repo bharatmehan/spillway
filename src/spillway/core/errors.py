@@ -37,6 +37,9 @@ class AdmissionDenied(SpillwayError):
             request, or None when waiting would not help.
         binding_dimension: The name of the dimension that ran out, or None if
             the refusal was not attributable to one.
+        explanation: How full every limit was when the refusal happened.
+            Typed loosely here so that the exception hierarchy stays free of
+            imports from the rest of the library.
 
     Example:
         >>> error = AdmissionDenied(
@@ -52,11 +55,13 @@ class AdmissionDenied(SpillwayError):
         *,
         retry_after: float | None = None,
         binding_dimension: str | None = None,
+        explanation: object | None = None,
     ) -> None:
         """Record the refusal along with what would make it succeed."""
         super().__init__(message)
         self.retry_after = retry_after
         self.binding_dimension = binding_dimension
+        self.explanation = explanation
 
 
 class AdmissionTimeout(AdmissionDenied):

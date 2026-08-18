@@ -385,3 +385,17 @@ class SyncStore(Protocol):
     def snapshot_sync(self, keys: Sequence[str]) -> Mapping[str, Utilisation]:
         """Report how full each key is. See `Store.snapshot`."""
         ...
+
+
+class DuplexStore(Store, SyncStore, Protocol):
+    """A store that serves both facades, implementing both protocols.
+
+    Every store this library ships is one. The distinction exists because a
+    third party store may reasonably implement only the half it can support.
+
+    Example:
+        >>> from spillway.stores.memory import MemoryStore
+        >>> store: DuplexStore = MemoryStore()
+        >>> store.reserve_sync([], ttl_ms=60_000.0, scope="acme", priority=0).granted
+        True
+    """
