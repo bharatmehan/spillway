@@ -47,6 +47,8 @@ version is below 0.1, any release may change anything.
 - The meter is inferred from the dimension name for `rpm`, `rpd`, `input_tpm`, `output_tpm` and
   `tpm`, so the common case is one line. Any other name must say what it counts, because guessing
   would meter the wrong thing silently.
+- A `Concurrency` dimension, limiting how many requests are in flight at once. One request takes
+  one slot whatever it costs, and gets it back whole at settlement however wrong the estimate was.
 
 ### Changed
 

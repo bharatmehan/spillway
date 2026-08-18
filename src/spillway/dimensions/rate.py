@@ -107,8 +107,8 @@ class Rate:
             message = (
                 f"Rate dimensions cannot be adaptive. A provider's published limit is a "
                 f"fact, not a hypothesis to probe, and searching for it means deliberately "
-                f"exceeding it. Remove adaptive=True from Rate({name!r}), or make a "
-                f"Concurrency dimension adaptive instead."
+                f"exceeding it. Remove adaptive=True from Rate({name!r}) and set the limit "
+                f"to the figure the provider publishes."
             )
             raise ConfigurationError(message)
         if limit <= 0:
