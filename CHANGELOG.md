@@ -61,6 +61,10 @@ version is below 0.1, any release may change anything.
 - A warning, once per process, when an in memory store is used and the process looks like one of
   several workers. The overshoot this causes appears at the provider, and nothing locally points at
   the cause, so the warning is the only thing that connects the two.
+- `AdmissionExplanation`, carried by every decision either way. It reports how full every limit was,
+  not just the one that ran out, because seeing what was not full is what tells someone the limit
+  they were about to raise is not the one actually binding. It prints readably and converts to
+  plain data.
 
 ### Changed
 
