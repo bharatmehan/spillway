@@ -1,0 +1,86 @@
+"""The decision arithmetic, and nothing else.
+
+Every function here is pure. None of them reads a clock, touches a store, owns
+state, or mutates an argument. The current time arrives as a parameter and new
+state comes back as a return value. Three things depend on that:
+
+- A synchronous caller and an asynchronous caller can share one implementation,
+  so the two entry points are thin drivers rather than two engines with two sets
+  of bugs.
+- The whole decision path is testable without an event loop.
+- A coordinated store has to run this same arithmetic inside a server side
+  script, in another language, and a differential test can only assert the two
+  agree if this side is a plain function over plain numbers.
+
+That last point sets the house style for this module: no comprehensions, no
+exceptions, no clever expressions, no operations that exist in Python and not in
+a small scripting language. Every value is a float, because that is the only
+numeric type the other implementation will have.
+
+## Rate accounting
+
+Rate limits use the generic cell rate algorithm. The entire state for one key is
+a single float, the theoretical arrival time, which is the moment the key will
+have fully paid for everything charged to it so far. It is O(1) in memory no
+matter how much traffic passes, and it is smoother than a fixed window, which
+admits a full limit at the end of one window and again at the start of the next.
+
+Two derived values, both computed by the caller:
+
+    emission_interval_ms = window_ms / limit    time one unit of cost buys
+    burst_ms             = window_ms            how far ahead a key may run
+"""
+
+from __future__ import annotations
+
+
+def gcra_reserve(
+    tat_ms: float,
+    now_ms: float,
+    cost: float,
+    emission_interval_ms: float,
+    burst_ms: float,
+) -> tuple[bool, float, float]:
+    """Charge `cost` against a rate key, if it fits.
+
+    Args:
+        tat_ms: The key's stored theoretical arrival time.
+        now_ms: The current time.
+        cost: How many units to charge.
+        emission_interval_ms: Time one unit of cost buys.
+        burst_ms: How far ahead of now the arrival time may run.
+
+    Returns:
+        Whether it was granted, the arrival time to store, and how long until a
+        refused charge would fit. On a refusal the arrival time comes back
+        exactly as it went in, so a caller that stores the result unconditionally
+        still mutates nothing. That is what makes an all or nothing batch of
+        claims safe to evaluate one at a time.
+
+    Example:
+        A limit of two per second, so one unit of cost buys 500ms and a key may
+        run 1000ms ahead. Two charges fit at once and the third does not.
+
+        >>> tat = 0.0
+        >>> granted, tat, retry = gcra_reserve(tat, 0.0, 1.0, 500.0, 1000.0)
+        >>> granted, tat, retry
+        (True, 500.0, 0.0)
+        >>> granted, tat, retry = gcra_reserve(tat, 0.0, 1.0, 500.0, 1000.0)
+        >>> granted, tat, retry
+        (True, 1000.0, 0.0)
+        >>> granted, tat, retry = gcra_reserve(tat, 0.0, 1.0, 500.0, 1000.0)
+        >>> granted, tat, retry
+        (False, 1000.0, 500.0)
+
+        Waiting out the retry makes room, and no more than that.
+
+        >>> gcra_reserve(tat, 500.0, 1.0, 500.0, 1000.0)
+        (True, 1500.0, 0.0)
+    """
+    start_ms = tat_ms
+    if now_ms > start_ms:
+        start_ms = now_ms
+    new_tat_ms = start_ms + cost * emission_interval_ms
+    if new_tat_ms - burst_ms <= now_ms:
+        return True, new_tat_ms, 0.0
+    return False, tat_ms, new_tat_ms - burst_ms - now_ms

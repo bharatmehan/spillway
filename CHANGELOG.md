@@ -24,6 +24,9 @@ version is below 0.1, any release may change anything.
 - The complete exception hierarchy under a single `SpillwayError` base. A refusal carries which
   dimension bound and how long until it would not have, so a caller can act rather than merely
   fail. The missing dependency error names the exact install command.
+- Rate reservation arithmetic, using the generic cell rate algorithm. The whole state for a rate
+  key is one float, so memory per key is constant no matter how much traffic passes, and a refusal
+  reports how long until the same charge would fit.
 
 ### Changed
 
