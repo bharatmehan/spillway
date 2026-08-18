@@ -55,6 +55,9 @@ version is below 0.1, any release may change anything.
 - `MemoryStore`, the default store. Zero configuration and zero dependencies, so the quickstart
   runs on a clean environment. It is not safe across processes, and its docstring says so first:
   four workers each running one enforce the full limit four times over.
+- Leases that are never settled are reclaimed once they outlive their expiry, so a process that
+  dies mid request cannot leak a gauge. Only gauges come back: a rate charge was really spent, and
+  inventing a refund would let a crashing worker exceed a provider's limit indefinitely.
 
 ### Changed
 

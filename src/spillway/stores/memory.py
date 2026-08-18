@@ -6,6 +6,7 @@ work on a clean environment.
 
 from __future__ import annotations
 
+import heapq
 import itertools
 import threading
 from collections.abc import Mapping, Sequence
@@ -69,6 +70,10 @@ class MemoryStore:
     Within one process it is correct and fast: the critical section is arithmetic
     over a handful of dictionary entries, guarded by one lock.
 
+    A reservation that is never settled, because the process making the call
+    died, is reclaimed once it outlives the expiry it was given. Without that,
+    gauges would leak until nothing was admitted at all.
+
     Args:
         clock: Where time comes from. Defaults to the real monotonic clock.
 
@@ -109,6 +114,10 @@ class MemoryStore:
         # deployment ever churns scopes fast enough to matter.
         self._config: dict[str, Claim] = {}
         self._leases: dict[str, _Lease] = {}
+        # Expiries in order, reaped lazily. An entry for a lease that has since
+        # been settled is left in place and skipped when it surfaces, because
+        # finding and removing it would cost more than ignoring it.
+        self._expiry: list[tuple[float, str]] = []
         self._next_id = itertools.count(1)
 
     def reserve_sync(
@@ -122,6 +131,7 @@ class MemoryStore:
         """Apply every claim, or none of them. See `Store.reserve`."""
         with self._lock:
             now_ms = self._clock.now_ms()
+            self._reap(now_ms)
             rate_after: dict[str, float] = {}
             gauge_after: dict[str, float] = {}
             for claim in claims:
@@ -166,6 +176,7 @@ class MemoryStore:
                 priority=priority,
                 expires_at_ms=now_ms + ttl_ms,
             )
+            heapq.heappush(self._expiry, (now_ms + ttl_ms, lease_id))
             return ReserveResult.granted_as(
                 lease_id,
                 utilisation=self._utilisation(claims, now_ms),
@@ -220,6 +231,7 @@ class MemoryStore:
         """
         with self._lock:
             now_ms = self._clock.now_ms()
+            self._reap(now_ms)
             found: dict[str, Utilisation] = {}
             for key in keys:
                 claim = self._config.get(key)
@@ -251,6 +263,31 @@ class MemoryStore:
     async def snapshot(self, keys: Sequence[str]) -> Mapping[str, Utilisation]:
         """Report how full each key is. See `Store.snapshot`."""
         return self.snapshot_sync(keys)
+
+    def _reap(self, now_ms: float) -> None:
+        """Reclaim anything held by a lease that outlived its expiry.
+
+        A request whose process died can never settle, so without this every
+        gauge would leak monotonically until nothing at all was admitted, and
+        the symptom would be a limiter that gradually stopped working with no
+        indication why.
+
+        Only gauges come back. A rate charge is not released here because it
+        was really spent: the call went out, and the only thing missing is the
+        report of how it ended.
+
+        Lazy, and deliberately so. Reaping on the way into a reservation means
+        there is no background task to leak if the process never shuts down
+        cleanly, and a store nobody is using does not need reaping.
+        """
+        while self._expiry and self._expiry[0][0] <= now_ms:
+            _expires_at_ms, lease_id = heapq.heappop(self._expiry)
+            lease = self._leases.pop(lease_id, None)
+            if lease is None:
+                continue
+            for claim in lease.claims:
+                if claim.kind is ClaimKind.GAUGE:
+                    self._apply(claim, claim.cost, now_ms)
 
     def _apply(self, claim: Claim, amount: float, now_ms: float) -> None:
         """Give `amount` back on this claim's key, or take more if it is negative."""

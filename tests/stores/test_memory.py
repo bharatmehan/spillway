@@ -270,3 +270,77 @@ def test_a_refused_key_is_still_reportable(store):
     reserve(store, [gauge(limit=1.0)])
     reserve(store, [gauge(limit=1.0)])
     assert store.snapshot_sync(["acme:generations"])["acme:generations"].limit == 1.0
+
+
+def test_a_lease_that_outlives_its_expiry_gives_its_gauge_back(store, clock):
+    # A process that dies mid request can never settle. Without reclamation
+    # every gauge leaks monotonically until the limiter admits nothing at all,
+    # and the symptom gives no hint of the cause.
+    reserve(store, [gauge(limit=1.0)], ttl_ms=1_000.0)
+    assert not reserve(store, [gauge(limit=1.0)]).granted
+    clock.advance(1_001)
+    assert reserve(store, [gauge(limit=1.0)]).granted
+
+
+def test_expiry_does_not_credit_a_rate_charge_back(store, clock):
+    # The call really went out and really consumed the quota. The only thing
+    # missing is the report of how it ended, and inventing a refund would let
+    # a crashing worker exceed the provider's limit indefinitely.
+    interval_ms = MINUTE_MS / 10
+    reserve(store, [rate(cost=5.0, limit=10.0)], ttl_ms=1_000.0)
+    clock.advance(1_001)
+    found = store.snapshot_sync(["acme:input_tpm"])["acme:input_tpm"]
+    # Down only by what the window itself replenished in that time, which is
+    # what a rate charge does anyway. No refund was granted on top of it.
+    assert found.used == pytest.approx(5.0 - 1_001 / interval_ms)
+
+
+def test_expiry_is_lazy_and_needs_something_to_ask(store, clock):
+    # No background task, so there is nothing to leak if the process never
+    # shuts down cleanly, and a store nobody uses does nothing at all.
+    result = reserve(store, [gauge(limit=1.0)], ttl_ms=1_000.0)
+    clock.advance(1_001)
+    assert result.lease_id in store._leases
+    store.snapshot_sync([])
+    assert result.lease_id not in store._leases
+
+
+def test_settling_a_lease_that_expired_raises(store, clock):
+    result = reserve(store, [gauge(limit=1.0)], ttl_ms=1_000.0)
+    clock.advance(1_001)
+    store.snapshot_sync([])
+    with pytest.raises(LeaseExpired, match="ran past its expiry"):
+        store.settle_sync(result.lease_id, [])
+
+
+def test_releasing_a_lease_that_expired_does_nothing(store, clock):
+    result = reserve(store, [gauge(limit=1.0)], ttl_ms=1_000.0)
+    clock.advance(1_001)
+    store.snapshot_sync([])
+    store.release_sync(result.lease_id)
+    assert store.snapshot_sync(["acme:generations"])["acme:generations"].used == 0.0
+
+
+def test_a_settled_lease_is_not_reclaimed_a_second_time_when_its_expiry_passes(store, clock):
+    # The expiry entry outlives the settlement. Acting on it again would give
+    # back capacity that was already given back, so the gauge would go negative
+    # and admit more than its limit.
+    first = reserve(store, [gauge(cost=1.0, limit=2.0)], ttl_ms=1_000.0)
+    store.settle_sync(first.lease_id, [Delta("acme:generations", ClaimKind.GAUGE, amount=1.0)])
+    reserve(store, [gauge(cost=1.0, limit=2.0)], ttl_ms=60_000.0)
+    clock.advance(1_001)
+    assert store.snapshot_sync(["acme:generations"])["acme:generations"].used == 1.0
+
+
+def test_a_lease_expires_only_once_its_own_expiry_has_passed(store, clock):
+    reserve(store, [gauge(limit=1.0)], ttl_ms=1_000.0)
+    clock.advance(999)
+    assert not reserve(store, [gauge(limit=1.0)]).granted
+
+
+def test_expiries_are_reclaimed_in_order_whatever_order_they_were_taken_in(store, clock):
+    reserve(store, [gauge(key="a", cost=1.0, limit=1.0)], ttl_ms=5_000.0)
+    reserve(store, [gauge(key="b", cost=1.0, limit=1.0)], ttl_ms=1_000.0)
+    clock.advance(1_001)
+    assert reserve(store, [gauge(key="b", cost=1.0, limit=1.0)]).granted
+    assert not reserve(store, [gauge(key="a", cost=1.0, limit=1.0)]).granted
