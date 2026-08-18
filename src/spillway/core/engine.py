@@ -84,3 +84,94 @@ def gcra_reserve(
     if new_tat_ms - burst_ms <= now_ms:
         return True, new_tat_ms, 0.0
     return False, tat_ms, new_tat_ms - burst_ms - now_ms
+
+
+def gcra_credit(
+    tat_ms: float,
+    now_ms: float,
+    amount: float,
+    emission_interval_ms: float,
+) -> float:
+    """Return unused capacity to a rate key.
+
+    Crediting back is a rewind of the arrival time, clamped so that it never
+    rewinds into the past. The clamp matters: without it, a key that has been
+    idle would bank credit and then admit a burst far larger than its limit.
+
+    This is what makes reserving conservatively affordable. Capacity held on an
+    estimate and not used is returned within the request's own lifetime, so it
+    is available to the next caller rather than wasted until the window rolls.
+
+    Args:
+        tat_ms: The key's stored theoretical arrival time.
+        now_ms: The current time.
+        amount: How many units to give back. Never negative; an overrun goes
+            through `gcra_debt` instead.
+        emission_interval_ms: Time one unit of cost buys.
+
+    Returns:
+        The arrival time to store.
+
+    Example:
+        A key charged two units at a 500ms interval, then given one back.
+
+        >>> gcra_credit(1000.0, 0.0, 1.0, 500.0)
+        500.0
+
+        Giving back more than was ever charged rewinds only as far as now.
+
+        >>> gcra_credit(1000.0, 0.0, 5.0, 500.0)
+        0.0
+    """
+    new_tat_ms = tat_ms - amount * emission_interval_ms
+    if new_tat_ms < now_ms:
+        new_tat_ms = now_ms
+    return new_tat_ms
+
+
+def gcra_debt(
+    tat_ms: float,
+    now_ms: float,
+    amount: float,
+    emission_interval_ms: float,
+    window_ms: float,
+    burst_ms: float,
+) -> float:
+    """Charge a rate key for capacity it used beyond what it reserved.
+
+    An overrun cannot be refused, because the tokens are already spent. It is
+    recorded as debt instead: the arrival time moves further forward, so the
+    excess is repaid out of the following window automatically.
+
+    The clamp bounds the debt at one extra window. Without it a single
+    pathological request could push the arrival time so far ahead that the key
+    admits nothing for hours, which turns one bad estimate into an outage.
+
+    Args:
+        tat_ms: The key's stored theoretical arrival time.
+        now_ms: The current time.
+        amount: How many units were used beyond the reservation.
+        emission_interval_ms: Time one unit of cost buys.
+        window_ms: The limit's window.
+        burst_ms: How far ahead of now the arrival time may run.
+
+    Returns:
+        The arrival time to store.
+
+    Example:
+        A modest overrun is simply carried forward.
+
+        >>> gcra_debt(1000.0, 0.0, 1.0, 500.0, 1000.0, 1000.0)
+        1500.0
+
+        A ruinous one is capped at one window beyond the burst allowance, so
+        the key is silent for a while rather than for ever.
+
+        >>> gcra_debt(1000.0, 0.0, 100.0, 500.0, 1000.0, 1000.0)
+        2000.0
+    """
+    new_tat_ms = tat_ms + amount * emission_interval_ms
+    ceiling_ms = now_ms + burst_ms + window_ms
+    if new_tat_ms > ceiling_ms:
+        new_tat_ms = ceiling_ms
+    return new_tat_ms

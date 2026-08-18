@@ -5,12 +5,13 @@ language, so their behaviour at the edges is a specification rather than an
 accident.
 """
 
-from spillway.core.engine import gcra_reserve
+from spillway.core.engine import gcra_credit, gcra_debt, gcra_reserve
 
 # A limit of two per second: one unit of cost buys 500ms, and a key may run one
 # window ahead of now.
 INTERVAL = 500.0
 BURST = 1000.0
+WINDOW = 1000.0
 
 
 def test_a_charge_against_an_idle_key_is_granted():
@@ -94,3 +95,57 @@ def test_a_fractional_cost_is_charged_proportionally():
     granted, tat, _retry = gcra_reserve(0.0, 0.0, 0.5, INTERVAL, BURST)
     assert granted
     assert tat == 250.0
+
+
+def test_a_credit_rewinds_the_arrival_time_by_what_was_returned():
+    assert gcra_credit(BURST, 0.0, 1.0, INTERVAL) == 500.0
+
+
+def test_a_credit_never_rewinds_into_the_past():
+    # Without this clamp an idle key would bank credit and then admit a burst
+    # far larger than its limit, which is the failure the limiter exists to stop.
+    assert gcra_credit(BURST, 0.0, 5.0, INTERVAL) == 0.0
+
+
+def test_a_credit_larger_than_the_reservation_stops_at_now():
+    assert gcra_credit(600.0, 400.0, 100.0, INTERVAL) == 400.0
+
+
+def test_a_credit_of_nothing_changes_nothing():
+    assert gcra_credit(BURST, 0.0, 0.0, INTERVAL) == BURST
+
+
+def test_reserving_then_crediting_the_whole_amount_restores_the_key():
+    # Reserve then release must leave the key exactly as it was found, which is
+    # the property the whole settlement path depends on.
+    granted, tat, _retry = gcra_reserve(300.0, 0.0, 1.0, INTERVAL, BURST)
+    assert granted
+    assert gcra_credit(tat, 0.0, 1.0, INTERVAL) == 300.0
+
+
+def test_a_debt_pushes_the_arrival_time_further_forward():
+    assert gcra_debt(BURST, 0.0, 1.0, INTERVAL, WINDOW, BURST) == 1500.0
+
+
+def test_a_debt_is_clamped_at_one_extra_window():
+    # One bad estimate must cost a scope a pause, not an outage.
+    assert gcra_debt(BURST, 0.0, 100.0, INTERVAL, WINDOW, BURST) == BURST + WINDOW
+
+
+def test_the_debt_clamp_is_measured_from_now_not_from_the_arrival_time():
+    assert gcra_debt(BURST, 5_000.0, 100.0, INTERVAL, WINDOW, BURST) == 5_000.0 + BURST + WINDOW
+
+
+def test_a_debt_of_nothing_changes_nothing():
+    assert gcra_debt(BURST, 0.0, 0.0, INTERVAL, WINDOW, BURST) == BURST
+
+
+def test_a_debt_exactly_at_the_clamp_is_not_reduced():
+    assert gcra_debt(BURST, 0.0, 2.0, INTERVAL, WINDOW, BURST) == 2000.0
+
+
+def test_a_key_in_debt_refuses_until_the_debt_is_paid():
+    tat = gcra_debt(BURST, 0.0, 2.0, INTERVAL, WINDOW, BURST)
+    granted, _tat, retry_after = gcra_reserve(tat, 0.0, 1.0, INTERVAL, BURST)
+    assert not granted
+    assert retry_after == 1500.0

@@ -27,6 +27,9 @@ version is below 0.1, any release may change anything.
 - Rate reservation arithmetic, using the generic cell rate algorithm. The whole state for a rate
   key is one float, so memory per key is constant no matter how much traffic passes, and a refusal
   reports how long until the same charge would fit.
+- Credit and debt arithmetic for rate keys. Unused capacity is returned within a request's own
+  lifetime, which is what makes reserving conservatively affordable, and an overrun becomes debt
+  repaid from the next window, bounded so one bad estimate cannot silence a scope for hours.
 
 ### Changed
 
