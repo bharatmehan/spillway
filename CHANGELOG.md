@@ -40,6 +40,10 @@ version is below 0.1, any release may change anything.
   and does nothing else: it never decides whether a claim fits, because that decision has to be
   made for every dimension at once or a request gets admitted against two limits and refused by the
   third with the first two already spent.
+- A `Rate` dimension, for limits consumed over a rolling window. It declares which part of a
+  request's cost it counts, so a tokens per minute limit and a requests per minute limit can sit
+  side by side without either counting the other's units. Asking for an adaptive rate limit is
+  refused with an explanation rather than accepted.
 
 ### Changed
 

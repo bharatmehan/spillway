@@ -13,6 +13,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+Meter = Literal["requests", "input_tokens", "output_tokens", "total_tokens"]
+"""Which part of a cost a rate limit counts."""
+
 
 @dataclass(frozen=True)
 class Cost:
@@ -44,6 +47,27 @@ class Cost:
     output_tokens: int = 0
     requests: int = 1
     extra: Mapping[str, int] = field(default_factory=dict)
+
+    def metered(self, meter: Meter) -> int:
+        """Return the part of this cost that `meter` counts.
+
+        A rate limit meters one thing. Requests per minute counts requests and
+        ignores tokens entirely; input tokens per minute counts only what was
+        sent. Pulling the right number out is a lookup, and it lives here
+        because this is where the fields are.
+
+        Example:
+            >>> cost = Cost(input_tokens=100, output_tokens=25)
+            >>> cost.metered("requests"), cost.metered("output_tokens")
+            (1, 25)
+        """
+        if meter == "requests":
+            return self.requests
+        if meter == "input_tokens":
+            return self.input_tokens
+        if meter == "output_tokens":
+            return self.output_tokens
+        return self.total_tokens
 
     @property
     def total_tokens(self) -> int:
