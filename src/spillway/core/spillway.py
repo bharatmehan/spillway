@@ -6,17 +6,23 @@ whether that call may go now.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
+from types import TracebackType
 
 from spillway.core.clock import Clock, MonotonicClock
 from spillway.core.cost import Cost, Estimate, default_estimate
-from spillway.core.errors import AdmissionDenied
-from spillway.core.lease import Lease
+from spillway.core.errors import AdmissionDenied, LeaseExpired
+from spillway.core.lease import Lease, LeaseState
 from spillway.core.scope import Priority, Scope
 from spillway.dimensions.base import Dimension
 from spillway.observability.explain import AdmissionExplanation
 from spillway.stores.base import Claim, DuplexStore
 from spillway.stores.memory import MemoryStore
+
+_log = logging.getLogger(__name__)
+
+_warned_about_unsettled = False
 
 RESERVATION_QUANTILE = 0.9
 """Which point of the predicted output distribution to reserve.
@@ -232,6 +238,16 @@ class AdmitContext:
     Example:
         >>> import asyncio
         >>> limiter = Spillway()
+        >>> async def one_call() -> str:
+        ...     async with limiter.admit(scope="tenant:acme") as lease:
+        ...         answer = "the model's answer"
+        ...         lease.settle(input=100, output=20)
+        ...         return answer
+        >>> asyncio.run(one_call())
+        "the model's answer"
+
+        Or without a context manager, for callers who cannot use one.
+
         >>> lease = asyncio.run(limiter.admit(scope="tenant:acme").acquire())
         >>> lease.scope.key
         'tenant:acme'
@@ -263,6 +279,7 @@ class AdmitContext:
         self._timeout = timeout
         self._deadline = deadline
         self._weight = weight
+        self._lease: Lease | None = None
 
     async def acquire(self) -> Lease:
         """Reserve the capacity and return the lease holding it.
@@ -294,6 +311,60 @@ class AdmitContext:
             requests=1,
         )
 
+    async def __aenter__(self) -> Lease:
+        """Reserve the capacity and hand over the lease.
+
+        Raises:
+            AdmissionDenied: if any dimension has no room.
+        """
+        self._lease = await self.acquire()
+        return self._lease
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        """Give the capacity back, whichever way the block ended.
+
+        Four endings, and each one has a different right answer.
+
+        The block raised, or the task was cancelled: the reservation goes back
+        whole, because nothing was consumed. Cancellation reaches here as an
+        exception like any other, and the release path awaits nothing, so it
+        cannot itself be interrupted partway through.
+
+        The block succeeded and settled: nothing left to do.
+
+        The block succeeded and did not settle: settle at the full reserved
+        amount, which is pessimistic and safe, and say so once. Nothing will
+        ever calibrate for a caller who never reports real costs, so every
+        request keeps paying the estimate's full price.
+        """
+        lease = self._lease
+        if lease is None or lease.state is not LeaseState.ACQUIRED:
+            return False
+        if exc_type is not None:
+            lease.abandon(reason=exc_type.__name__)
+            return False
+        _warn_once_about_unsettled()
+        try:
+            lease.settle(
+                input=lease.reserved.input_tokens,
+                output=lease.reserved.output_tokens,
+            )
+        except LeaseExpired:
+            # The call outran its expiry and the capacity is already back. Say
+            # so, but do not raise: the caller's work succeeded, and throwing
+            # their result away over the bookkeeping would be the worse trade.
+            _log.warning(
+                "A request finished after its reservation had already expired and been "
+                "reclaimed, so its real cost was never recorded. The call took longer "
+                "than the limiter was told to expect."
+            )
+        return False
+
     def __enter__(self) -> Lease:
         """Refuse to run, and say what to use instead.
 
@@ -311,3 +382,22 @@ class AdmitContext:
 
     def __exit__(self, *_: object) -> None:
         """Unreachable, because entering always raises."""
+
+
+def _warn_once_about_unsettled() -> None:
+    """Say, once, that a lease was settled at its reserved amount by default.
+
+    Once per process rather than per request, because the fix is one change in
+    the calling code and repeating it every time would only teach people to
+    filter the message out.
+    """
+    global _warned_about_unsettled
+    if _warned_about_unsettled:
+        return
+    _warned_about_unsettled = True
+    _log.warning(
+        "A request finished without reporting what it actually cost, so the full "
+        "reserved amount was charged. That is safe but expensive: the reservation is "
+        "an estimate, and nothing corrects it if the real figure is never reported. "
+        "Call lease.settle(input=..., output=...) before the block ends."
+    )

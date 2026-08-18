@@ -75,6 +75,10 @@ version is below 0.1, any release may change anything.
   the caller configured rather than an internal store key, reports the wait in seconds, and carries
   how full every limit was. A plain `with` statement refuses and names the asynchronous form rather
   than starting an event loop on the caller's behalf.
+- `admit()` works as an asynchronous context manager, and handles all four ways a block can end.
+  A raised exception or a cancelled task returns the whole reservation, because nothing was
+  consumed. Leaving without settling charges the full reserved amount and says so once. A request
+  that outran its expiry keeps its result: the bookkeeping failed, not the caller's work.
 
 ### Changed
 
