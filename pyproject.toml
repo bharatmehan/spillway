@@ -94,6 +94,10 @@ ban-relative-imports = "parents"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "D", "S101"]
+# The exception names are public API and read better in an except clause without
+# a suffix: `except AdmissionDenied` says what happened, `AdmissionDeniedError`
+# only says that something went wrong.
+"src/spillway/core/errors.py" = ["N818"]
 
 [tool.mypy]
 python_version = "3.10"

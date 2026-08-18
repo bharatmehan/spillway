@@ -21,6 +21,9 @@ version is below 0.1, any release may change anything.
   the real figure replaces it at settlement.
 - `Scope` and `Priority`. A scope is the key every limit is tracked against; a priority is an
   ordinary integer, with four named conventions, where negative means the work is sheddable.
+- The complete exception hierarchy under a single `SpillwayError` base. A refusal carries which
+  dimension bound and how long until it would not have, so a caller can act rather than merely
+  fail. The missing dependency error names the exact install command.
 
 ### Changed
 
