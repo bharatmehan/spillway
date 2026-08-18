@@ -7,7 +7,8 @@ whether that call may go now.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from types import TracebackType
 
 from spillway.core.clock import Clock, MonotonicClock
@@ -15,9 +16,9 @@ from spillway.core.cost import Cost, Estimate, default_estimate
 from spillway.core.errors import AdmissionDenied, LeaseExpired
 from spillway.core.lease import Lease, LeaseState
 from spillway.core.scope import Priority, Scope
-from spillway.dimensions.base import Dimension
+from spillway.dimensions.base import Dimension, claim_key
 from spillway.observability.explain import AdmissionExplanation
-from spillway.stores.base import Claim, DuplexStore
+from spillway.stores.base import Claim, DuplexStore, Utilisation
 from spillway.stores.memory import MemoryStore
 
 _log = logging.getLogger(__name__)
@@ -44,6 +45,27 @@ predicted from history.
 # reservation and cannot settle, which the resulting error says plainly.
 DEFAULT_LEASE_TTL_MS = 60_000.0
 """How long a reservation may go unsettled before its capacity is reclaimed."""
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """How full everything is right now, for one scope.
+
+    Cheap enough for a health check, and it reserves nothing, so calling it on
+    a timer cannot affect what gets admitted.
+
+    Example:
+        >>> from spillway.dimensions.rate import Rate
+        >>> limiter = Spillway(dimensions=[Rate("rpm", limit=1_000)], scope="tenant:acme")
+        >>> found = limiter.snapshot()
+        >>> found.scope
+        'tenant:acme'
+        >>> found.dimensions["rpm"].limit
+        1000.0
+    """
+
+    scope: str
+    dimensions: Mapping[str, Utilisation]
 
 
 class Spillway:
@@ -150,6 +172,33 @@ class Spillway:
             timeout=timeout,
             deadline=deadline,
             weight=weight,
+        )
+
+    def snapshot(self, scope: str | Scope | None = None) -> Snapshot:
+        """Report how full every limit is, without reserving anything.
+
+        Args:
+            scope: Whose budget to report on. Defaults to the limiter's.
+
+        Returns:
+            A snapshot keyed by dimension name.
+
+        Limits come from the dimensions rather than from the store, so a
+        dimension that has never been claimed against reports as empty out of
+        its real limit instead of as empty out of nothing.
+        """
+        resolved = Scope.of(scope if scope is not None else self._default_scope)
+        name_of_key = {claim_key(resolved, d.name): d for d in self._dimensions}
+        found = self._store.snapshot_sync(list(name_of_key))
+        return Snapshot(
+            scope=resolved.key,
+            dimensions={
+                dimension.name: Utilisation(
+                    used=found[key].used,
+                    limit=dimension.limit,
+                )
+                for key, dimension in name_of_key.items()
+            },
         )
 
     async def _acquire(

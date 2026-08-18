@@ -47,11 +47,12 @@ class Dimension(Protocol):
         >>> class LongPrompts:
         ...     name = "long_prompts"
         ...     kind = ClaimKind.GAUGE
+        ...     limit = 4.0
         ...
         ...     def claim(self, cost: Cost, scope: Scope) -> Claim | None:
         ...         if cost.input_tokens < 100_000:
         ...             return None
-        ...         return Claim(claim_key(scope, self.name), self.kind, cost=1.0, limit=4.0)
+        ...         return Claim(claim_key(scope, self.name), self.kind, cost=1.0, limit=self.limit)
         ...
         ...     def settle(self, reserved: Cost, actual: Cost, scope: Scope) -> Delta | None:
         ...         if reserved.input_tokens < 100_000:
@@ -72,6 +73,15 @@ class Dimension(Protocol):
     @property
     def kind(self) -> ClaimKind:
         """Whether this axis is consumed over a window or held and given back."""
+        ...
+
+    @property
+    def limit(self) -> float:
+        """The most this axis allows, in whatever units it counts.
+
+        Read rather than stored by anything else, because an adaptive limit
+        changes underneath and a cached copy would go stale.
+        """
         ...
 
     def claim(self, cost: Cost, scope: Scope) -> Claim | None:

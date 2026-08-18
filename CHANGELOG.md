@@ -79,6 +79,10 @@ version is below 0.1, any release may change anything.
   A raised exception or a cancelled task returns the whole reservation, because nothing was
   consumed. Leaving without settling charges the full reserved amount and says so once. A request
   that outran its expiry keeps its result: the bookkeeping failed, not the caller's work.
+- `Spillway.snapshot()`, reporting how full every limit is for one scope without reserving
+  anything, so it is safe to call from a health check. Limits come from the dimensions rather than
+  from the store, so a dimension reports its real limit before its first request rather than
+  appearing to have none.
 
 ### Changed
 
