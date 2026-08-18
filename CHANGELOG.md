@@ -36,6 +36,10 @@ version is below 0.1, any release may change anything.
 - The types a store speaks in: `Claim`, `Delta`, `Utilisation` and `ReserveResult`. A refusal names
   the key that bound and how long until it would not have, because a bare yes or no cannot be
   explained to a user and forces a caller to poll.
+- A `Dimension` protocol. A dimension turns a cost into a claim and a settlement into a correction,
+  and does nothing else: it never decides whether a claim fits, because that decision has to be
+  made for every dimension at once or a request gets admitted against two limits and refused by the
+  third with the first two already spent.
 
 ### Changed
 
