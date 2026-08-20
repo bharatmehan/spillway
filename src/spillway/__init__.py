@@ -7,6 +7,10 @@ difference goes back immediately rather than at the end of a window.
 A call that finds no room waits for it, highest priority first, rather than
 failing on a limit that will have cleared in a second.
 
+Output length is predicted rather than guessed at. An estimator that has watched
+a route reserves what most of its requests come in under, instead of the maximum
+the caller was willing to allow, which is usually many times larger.
+
     from spillway import Concurrency, Rate, Spillway
 
     limiter = Spillway(
@@ -15,11 +19,12 @@ failing on a limit that will have cleared in a second.
             Rate("input_tpm", limit=400_000),
             Rate("output_tpm", limit=80_000),
             Concurrency("generations", limit=64),
-        ]
+        ],
+        estimator=QuantileEstimator(route_key=lambda ctx: ctx.tags.get("task")),
     )
 
     async def call(prompt: str) -> str:
-        async with limiter.admit(prompt=prompt, max_tokens=1_024) as lease:
+        async with limiter.admit(prompt=prompt, max_tokens=1_024, tags={"task": "chat"}) as lease:
             response = await your_client.create(prompt=prompt)
             lease.settle(input=response.usage.input, output=response.usage.output)
             return response.text
@@ -44,6 +49,11 @@ from spillway.core.scope import Priority, Scope
 from spillway.core.spillway import Spillway
 from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
+from spillway.estimators.base import RequestContext
+from spillway.estimators.callable import CallableEstimator
+from spillway.estimators.max_tokens import MaxTokensEstimator
+from spillway.estimators.quantile import QuantileEstimator
+from spillway.estimators.static import StaticEstimator
 
 try:
     __version__ = version("spillway")
@@ -53,6 +63,7 @@ except PackageNotFoundError:  # pragma: no cover - only when running from a sour
 __all__ = [
     "AdmissionDenied",
     "AdmissionTimeout",
+    "CallableEstimator",
     "Concurrency",
     "ConfigurationError",
     "Cost",
@@ -60,12 +71,16 @@ __all__ = [
     "Estimate",
     "Lease",
     "LeaseState",
+    "MaxTokensEstimator",
     "Priority",
+    "QuantileEstimator",
     "Rate",
+    "RequestContext",
     "Scope",
     "ScopeExhausted",
     "Shed",
     "Spillway",
     "SpillwayError",
+    "StaticEstimator",
     "__version__",
 ]

@@ -78,6 +78,10 @@ version is below 0.1, any release may change anything.
   quantile is, and lowering the quantile because a route is wide would walk it down through a
   range where nothing changes, then off the far side of a mode, and overrun most of the traffic
   at once.
+- The four estimators and the request context join the top level export list, so
+  `from spillway import QuantileEstimator` works. The estimator protocol and the observation do
+  not: a protocol needs no import to implement, and exporting one only enlarges what is promised
+  for ever.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing

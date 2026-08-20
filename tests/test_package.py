@@ -15,6 +15,7 @@ import spillway
 EXPECTED = [
     "AdmissionDenied",
     "AdmissionTimeout",
+    "CallableEstimator",
     "Concurrency",
     "ConfigurationError",
     "Cost",
@@ -22,13 +23,17 @@ EXPECTED = [
     "Estimate",
     "Lease",
     "LeaseState",
+    "MaxTokensEstimator",
     "Priority",
+    "QuantileEstimator",
     "Rate",
+    "RequestContext",
     "Scope",
     "ScopeExhausted",
     "Shed",
     "Spillway",
     "SpillwayError",
+    "StaticEstimator",
     "__version__",
 ]
 
@@ -68,6 +73,14 @@ def test_internals_are_not_reachable_from_the_top_level():
     # Everything else needs an explicit submodule import, so what an editor
     # offers at the top level is what is actually supported.
     for name in ("engine", "MemoryStore", "Claim", "Delta", "Utilisation"):
+        assert not hasattr(spillway, name)
+
+
+def test_the_extension_protocols_are_not_exported():
+    # Estimators are constructed, so they are exported. The protocol behind
+    # them is implemented, and a protocol needs no import to implement, so
+    # exporting it would only enlarge what is promised for ever.
+    for name in ("Estimator", "Observation", "Store", "Dimension", "Clock"):
         assert not hasattr(spillway, name)
 
 
