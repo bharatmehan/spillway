@@ -33,6 +33,11 @@ version is below 0.1, any release may change anything.
   Prediction happens once per request rather than once per attempt: a request that waits reserves
   what it asked for when it arrived, because a prediction that moved while it queued would mean
   its place in the queue was earned against a different request.
+- A `tags` mapping on `admit()`, for whatever the estimator should route on. Nothing here
+  affects admission directly. It exists because output length is close to unpredictable across
+  every call to a model and quite predictable within one task, so `tags={"task": "summarise"}` is
+  usually worth more than any amount of cleverness elsewhere. Copied on the way in, so a caller
+  reusing one dictionary cannot rewrite the past.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing

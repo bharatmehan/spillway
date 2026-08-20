@@ -107,3 +107,45 @@ async def test_any_prediction_the_estimator_makes_is_what_gets_reserved(output):
     async with limiter.admit() as lease:
         assert lease.reserved == Cost(input_tokens=0, output_tokens=output, requests=1)
         lease.settle(input=0, output=output)
+
+
+async def test_tags_reach_the_estimator():
+    clock = FakeClock()
+    estimator = Recorder()
+    limiter = build(clock, estimator)
+    async with limiter.admit(tags={"task": "summarise"}) as lease:
+        lease.settle(input=0, output=50)
+    assert estimator.asked[0].tags == {"task": "summarise"}
+
+
+async def test_tags_default_to_none_at_all():
+    clock = FakeClock()
+    estimator = Recorder()
+    limiter = build(clock, estimator)
+    async with limiter.admit() as lease:
+        lease.settle(input=0, output=50)
+    assert estimator.asked[0].tags == {}
+
+
+async def test_tags_are_copied_rather_than_held():
+    # The context is handed to user supplied code and then kept as the key to a
+    # route's history. A caller reusing one dictionary across requests would
+    # otherwise rewrite the past every time they changed it.
+    clock = FakeClock()
+    estimator = Recorder()
+    limiter = build(clock, estimator)
+    mutable = {"task": "summarise"}
+    async with limiter.admit(tags=mutable) as lease:
+        lease.settle(input=0, output=50)
+    mutable["task"] = "translate"
+    assert estimator.asked[0].tags == {"task": "summarise"}
+
+
+async def test_tags_do_not_change_what_is_admitted():
+    # They are routing information for the estimator and nothing else. A tag
+    # that quietly affected a limit would be a limit nobody configured.
+    clock = FakeClock()
+    limiter = build(clock)
+    async with limiter.admit(max_tokens=100, tags={"task": "anything"}) as lease:
+        assert lease.reserved.output_tokens == 100
+        lease.settle(input=0, output=10)

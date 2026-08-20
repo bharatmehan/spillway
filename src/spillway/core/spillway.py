@@ -181,6 +181,7 @@ class Spillway:
         model: str | None = None,
         timeout: float | None = None,
         deadline: float | None = None,
+        tags: Mapping[str, str] | None = None,
         weight: float = 1.0,
     ) -> AdmitContext:
         """Ask whether a request may proceed, and reserve what it will cost.
@@ -199,6 +200,12 @@ class Spillway:
             deadline: A fixed point to give up at, in seconds on the same
                 monotonic scale the standard library reports. Mutually
                 exclusive with `timeout`.
+            tags: Whatever the estimator should route on, such as
+                `{"task": "summarise"}`. Nothing here affects admission
+                directly. It exists because output length is close to
+                unpredictable across every call to a model and quite
+                predictable within one task, so naming the task is usually
+                worth more than any amount of cleverness elsewhere.
             weight: Reserved for fair sharing, which does not exist yet.
 
         Returns:
@@ -229,6 +236,7 @@ class Spillway:
             model=model,
             timeout=timeout,
             deadline=deadline,
+            tags=dict(tags) if tags else {},
             weight=weight,
         )
 
@@ -544,6 +552,7 @@ class AdmitContext:
         model: str | None,
         timeout: float | None,
         deadline: float | None,
+        tags: Mapping[str, str],
         weight: float,
     ) -> None:
         """Record what was asked for, without asking for it yet."""
@@ -556,6 +565,7 @@ class AdmitContext:
         self._model = model
         self._timeout = timeout
         self._deadline = deadline
+        self._tags = tags
         self._weight = weight
         self._lease: Lease | None = None
 
@@ -585,6 +595,7 @@ class AdmitContext:
             max_tokens=self._max_tokens,
             model=self._model,
             scope=self._scope,
+            tags=self._tags,
         )
 
     def _reserved(self) -> Cost:
