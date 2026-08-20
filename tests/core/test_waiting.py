@@ -5,7 +5,8 @@ import asyncio
 import pytest
 
 from spillway.core.clock import FakeClock
-from spillway.core.errors import AdmissionDenied, AdmissionTimeout, ConfigurationError
+from spillway.core.errors import AdmissionDenied, AdmissionTimeout, ConfigurationError, Shed
+from spillway.core.scope import Priority
 from spillway.core.spillway import Spillway
 from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
@@ -272,3 +273,69 @@ async def test_cancelling_a_queued_request_leaves_no_capacity_held(clock):
     held.settle(input=0, output=0)
     await spin()
     assert limiter.snapshot().dimensions["generations"].used == 0.0
+
+
+async def test_a_sheddable_arrival_bounces_when_its_own_band_is_full(clock):
+    limiter = build(clock, [Concurrency("generations", limit=1)], queue_capacity=1)
+    await limiter.admit().acquire()
+    queued = asyncio.ensure_future(limiter.admit(priority=Priority.BATCH).acquire())
+    await spin()
+    with pytest.raises(Shed, match="could wait"):
+        await limiter.admit(priority=Priority.BATCH).acquire()
+    queued.cancel()
+
+
+async def test_a_full_band_leaves_the_other_bands_alone(clock):
+    # The failure mode this exists for: batch work filling the queue and
+    # interactive requests finding no slot left.
+    limiter = build(clock, [Concurrency("generations", limit=1)], queue_capacity=1)
+    held = await limiter.admit().acquire()
+    batch = asyncio.ensure_future(limiter.admit(priority=Priority.BATCH).acquire())
+    await spin()
+    interactive = asyncio.ensure_future(limiter.admit(priority=Priority.INTERACTIVE).acquire())
+    await spin()
+    held.settle(input=0, output=0)
+    await asyncio.wait_for(interactive, 1.0)
+    batch.cancel()
+
+
+async def test_a_full_band_refuses_an_unsheddable_arrival(clock):
+    limiter = build(clock, [Concurrency("generations", limit=1)], queue_capacity=1)
+    await limiter.admit().acquire()
+    queued = asyncio.ensure_future(limiter.admit().acquire())
+    await spin()
+    with pytest.raises(AdmissionDenied, match="queue is full"):
+        await limiter.admit().acquire()
+    queued.cancel()
+
+
+async def test_shed_lowest_makes_room_for_a_higher_priority_arrival(clock):
+    limiter = build(
+        clock,
+        [Concurrency("generations", limit=1)],
+        queue_capacity=1,
+        queue_full_policy="shed_lowest",
+    )
+    held = await limiter.admit().acquire()
+    batch = asyncio.ensure_future(limiter.admit(priority=Priority.BATCH).acquire())
+    await spin()
+    normal = asyncio.ensure_future(limiter.admit(priority=Priority.NORMAL).acquire())
+    await spin()
+    displaced = asyncio.ensure_future(limiter.admit(priority=Priority.NORMAL).acquire())
+    await spin()
+    with pytest.raises(Shed, match="lowest priority"):
+        await batch
+    held.settle(input=0, output=0)
+    lease = await asyncio.wait_for(normal, 1.0)
+    lease.settle(input=0, output=0)
+    await asyncio.wait_for(displaced, 1.0)
+
+
+def test_an_unknown_queue_full_policy_is_a_configuration_error(clock):
+    with pytest.raises(ConfigurationError, match="not a queue full policy"):
+        build(clock, [], queue_full_policy="drop_oldest")
+
+
+def test_a_queue_with_no_room_at_all_is_a_configuration_error(clock):
+    with pytest.raises(ConfigurationError, match="at least one waiter"):
+        build(clock, [], queue_capacity=0)

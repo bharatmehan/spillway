@@ -52,6 +52,8 @@ version is below 0.1, any release may change anything.
 - The dispatch loop survives an unexpected failure. It reports the first one with its traceback
   and carries on, so queued requests reach their own timeouts and are told what happened, rather
   than waiting on a dispatcher that is no longer there.
+- `queue_capacity` and `queue_full_policy` on the limiter, so the bound on each band and what a
+  full band does with a new arrival are both things a caller sets rather than things they discover.
 
 ### Changed
 

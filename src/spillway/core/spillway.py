@@ -17,7 +17,7 @@ from spillway.core.cost import Cost, Estimate, default_estimate
 from spillway.core.dispatcher import Dispatcher
 from spillway.core.errors import AdmissionDenied, ConfigurationError, LeaseExpired
 from spillway.core.lease import Lease, LeaseState
-from spillway.core.queue import Waiter, WaitQueue
+from spillway.core.queue import DEFAULT_QUEUE_CAPACITY, QueueFullPolicy, Waiter, WaitQueue
 from spillway.core.scope import Priority, Scope
 from spillway.dimensions.base import Dimension, claim_key
 from spillway.observability.explain import AdmissionExplanation
@@ -98,6 +98,13 @@ class Spillway:
         default_timeout: How many seconds to wait for capacity when a caller
             names neither a timeout nor a deadline. Zero refuses rather than
             waits. None waits for as long as it takes.
+        queue_capacity: How many requests may wait in each priority band. Per
+            band rather than shared, so a flood of batch work cannot consume
+            the slots an interactive request needs.
+        queue_full_policy: What a full band does with a new arrival. "reject"
+            refuses it. "shed_lowest" drops the lowest priority waiter to make
+            room for a higher priority one, and refuses when the arrival is
+            itself the lowest.
 
     Example:
         >>> import asyncio
@@ -127,11 +134,15 @@ class Spillway:
         clock: Clock | None = None,
         scope: str | Scope | None = None,
         default_timeout: float | None = DEFAULT_TIMEOUT_S,
+        queue_capacity: int = DEFAULT_QUEUE_CAPACITY,
+        queue_full_policy: QueueFullPolicy = "reject",
     ) -> None:
         """Assemble a limiter. Every argument has a usable default.
 
         Raises:
-            ConfigurationError: if `default_timeout` is negative.
+            ConfigurationError: if `default_timeout` is negative, if
+                `queue_capacity` is below one, or if `queue_full_policy` is not
+                one the queue knows.
         """
         if default_timeout is not None and default_timeout < 0:
             message = (
@@ -145,7 +156,7 @@ class Spillway:
         self._dimensions = tuple(dimensions)
         self._store: DuplexStore = store if store is not None else MemoryStore(clock=self._clock)
         self._default_scope = Scope.of(scope)
-        self._queue = WaitQueue()
+        self._queue = WaitQueue(capacity=queue_capacity, policy=queue_full_policy)
         self._dispatcher = Dispatcher(limiter=self, queue=self._queue, clock=self._clock)
 
     def __repr__(self) -> str:
