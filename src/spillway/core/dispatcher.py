@@ -33,6 +33,36 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing, and the limiter own
 
 _log = logging.getLogger(__name__)
 
+_warned_about_a_failure = False
+
+# ponytail: a flat second between attempts once something has gone wrong, with
+# no backoff and no giving up. Waiters reach their own deadlines and are told,
+# which is the outcome that matters, and this only decides how much log a badly
+# broken store produces on the way there. Something adaptive if a real store
+# turns out to fail in bursts that a fixed interval handles badly.
+FAILURE_BACKOFF_MS = 1_000.0
+"""How long to wait after an unexpected failure before trying again."""
+
+
+def _warn_once_about_a_failure() -> None:
+    """Report the first unexpected failure in the dispatch loop, with its traceback.
+
+    Once per process. The loop carries on afterwards, because a dispatcher that
+    died would be a hang for every caller that ever queues, and a hang is the
+    failure nobody can diagnose. Repeating the same traceback on every pass
+    would only teach people to filter this message out.
+    """
+    global _warned_about_a_failure
+    if _warned_about_a_failure:
+        return
+    _warned_about_a_failure = True
+    _log.exception(
+        "The dispatcher hit an unexpected failure while serving a waiter. It will keep "
+        "going, so queued requests will reach their own timeouts rather than hanging, "
+        "but nothing is being admitted while this keeps happening. This is a bug, in "
+        "this library or in a store implementing its protocol."
+    )
+
 
 def _still_to_wait(waiter: Waiter, now_ms: float) -> float | None:
     """How long the binding limit would still need, as of now.
@@ -173,10 +203,20 @@ class Dispatcher:
         The emptiness check, the clearing of the task and the return happen
         with no await between them, so a push cannot slip in and find itself
         with no dispatcher.
+
+        Nothing short of cancellation stops it. A dispatcher that died on an
+        unexpected error would be a hang for every caller that ever queues,
+        and a hang is the failure nobody can diagnose from the outside.
         """
         try:
             while self._queue.depth:
-                await self._serve_next()
+                try:
+                    await self._serve_next()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    _warn_once_about_a_failure()
+                    await self._clock.sleep(FAILURE_BACKOFF_MS)
         finally:
             self._task = None
 

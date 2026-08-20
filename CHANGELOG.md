@@ -49,6 +49,9 @@ version is below 0.1, any release may change anything.
   rather than wait, or to None to wait for as long as it takes.
 - A cancelled request takes itself out of the queue on the way past, so a waiter nobody is
   listening for cannot hold its band's head against everything behind it.
+- The dispatch loop survives an unexpected failure. It reports the first one with its traceback
+  and carries on, so queued requests reach their own timeouts and are told what happened, rather
+  than waiting on a dispatcher that is no longer there.
 
 ### Changed
 

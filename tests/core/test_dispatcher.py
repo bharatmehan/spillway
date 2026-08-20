@@ -5,6 +5,7 @@ import logging
 
 import pytest
 
+from spillway.core import dispatcher as dispatch
 from spillway.core.clock import FakeClock
 from spillway.core.cost import Cost
 from spillway.core.dispatcher import Dispatcher
@@ -278,3 +279,47 @@ async def test_a_gauge_timeout_says_that_waiting_longer_may_not_help(clock):
     with pytest.raises(AdmissionTimeout, match="rather than on a timer") as raised:
         await asyncio.wait_for(waiter.future, 1.0)
     assert raised.value.retry_after is None
+
+
+async def test_the_loop_survives_an_unexpected_failure(clock, caplog, monkeypatch):
+    # A dispatcher that died here would be a hang for every caller that ever
+    # queues, and a hang is the failure nobody can diagnose from outside.
+    monkeypatch.setattr(dispatch, "_warned_about_a_failure", False)
+
+    class Broken(MemoryStore):
+        def __init__(self, clock):
+            super().__init__(clock=clock)
+            self.failures = 0
+
+        async def reserve(self, claims, **arguments):
+            if self.failures == 0:
+                self.failures += 1
+                raise RuntimeError("the store fell over")
+            return self.reserve_sync(claims, **arguments)
+
+    limiter, queue, dispatcher = build(clock, [Rate("rpm", limit=60)], store=Broken(clock))
+    with caplog.at_level(logging.ERROR):
+        waiter = enqueue(limiter, queue, dispatcher)
+        await until_sleeping(clock)
+        clock.advance(dispatch.FAILURE_BACKOFF_MS)
+        await asyncio.wait_for(waiter.future, 1.0)
+    assert "unexpected failure" in caplog.text
+
+
+async def test_the_failure_is_reported_once_rather_than_on_every_pass(clock, caplog, monkeypatch):
+    monkeypatch.setattr(dispatch, "_warned_about_a_failure", False)
+
+    class AlwaysBroken(MemoryStore):
+        async def reserve(self, claims, **arguments):
+            raise RuntimeError("the store fell over")
+
+    limiter, queue, dispatcher = build(clock, [Rate("rpm", limit=60)], store=AlwaysBroken(clock))
+    with caplog.at_level(logging.ERROR):
+        waiter = enqueue(limiter, queue, dispatcher, deadline_ms=3_000.0)
+        for _ in range(3):
+            await until_sleeping(clock)
+            clock.advance(dispatch.FAILURE_BACKOFF_MS)
+            await spin()
+        with pytest.raises(AdmissionTimeout):
+            await asyncio.wait_for(waiter.future, 1.0)
+    assert caplog.text.count("unexpected failure") == 1
