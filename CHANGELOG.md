@@ -24,6 +24,9 @@ version is below 0.1, any release may change anything.
 - A bound on each priority band, ten thousand waiters by default. Per band rather than shared, so
   a flood of batch work cannot consume the slots an interactive request needs, and bounded at all
   because an unbounded queue turns a rate limit problem into an out of memory problem.
+- Shedding, as one sentence: a negative priority arrival is dropped rather than queued when its
+  own band is at capacity. It raises `Shed` rather than a plain refusal, so a caller can retry
+  later instead of treating a busy system as an error.
 
 ## 0.0.2 (2026-08-18)
 

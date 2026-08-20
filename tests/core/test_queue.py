@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from spillway.core.cost import Cost
-from spillway.core.errors import AdmissionDenied, ConfigurationError
+from spillway.core.errors import AdmissionDenied, ConfigurationError, Shed
 from spillway.core.queue import Waiter, WaitQueue
 from spillway.core.scope import Scope
 
@@ -184,3 +184,36 @@ async def test_a_full_band_frees_up_once_a_waiter_leaves():
 def test_a_queue_with_no_room_at_all_is_a_configuration_error():
     with pytest.raises(ConfigurationError, match="at least one waiter"):
         WaitQueue(capacity=0)
+
+
+async def test_a_negative_priority_arrival_is_shed_when_its_band_is_full():
+    # The whole shedding rule, and it needs no threshold to tune: under
+    # pressure the low bands fill first and their arrivals bounce, while the
+    # interactive band carries on because its capacity is its own.
+    queue = WaitQueue(capacity=1)
+    queue.push(waiting(priority=-100))
+    with pytest.raises(Shed, match="could wait"):
+        queue.push(waiting(priority=-100))
+
+
+async def test_a_negative_priority_arrival_queues_normally_when_there_is_room():
+    queue = WaitQueue(capacity=2)
+    queue.push(waiting(priority=-100))
+    queue.push(waiting(priority=-100))
+    assert queue.depth == 2
+
+
+async def test_a_shed_refusal_is_still_an_admission_denied():
+    # So a caller who does not care about the distinction catches one thing.
+    queue = WaitQueue(capacity=1)
+    queue.push(waiting(priority=-50))
+    with pytest.raises(AdmissionDenied):
+        queue.push(waiting(priority=-50))
+
+
+async def test_a_zero_priority_arrival_is_refused_rather_than_shed():
+    queue = WaitQueue(capacity=1)
+    queue.push(waiting(priority=0))
+    with pytest.raises(AdmissionDenied) as raised:
+        queue.push(waiting(priority=0))
+    assert not isinstance(raised.value, Shed)

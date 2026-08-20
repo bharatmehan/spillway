@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from spillway.core.cost import Cost
-from spillway.core.errors import AdmissionDenied, ConfigurationError
+from spillway.core.errors import AdmissionDenied, ConfigurationError, Shed
 from spillway.core.lease import Lease
 from spillway.core.scope import Scope
 from spillway.stores.base import Claim
@@ -32,15 +32,31 @@ out of memory.
 """
 
 
-def _full_message(priority: int, capacity: int) -> str:
-    """Say that the backlog is the problem, not the limit."""
-    return (
-        f"The priority {priority} queue is full at {capacity:,} waiters, so this request "
-        f"was refused rather than making the backlog longer. Capacity is per band, so "
-        f"other priorities are unaffected. Raise queue_capacity if the backlog is expected, "
-        f"raise the limits if it is not, or send this work at a negative priority so it is "
-        f"shed instead of queued."
+def _full(waiter: Waiter, capacity: int) -> AdmissionDenied:
+    """Build the refusal for a waiter whose band has no room.
+
+    Negative priority means the caller said this work can wait, and something
+    that can wait can also not happen. Under pressure the low bands fill first,
+    so their arrivals bounce while the interactive band, whose capacity is its
+    own, carries on untouched. That is the whole of the shedding rule, and it
+    needs no saturation threshold to tune.
+    """
+    if waiter.priority < 0:
+        message = (
+            f"The priority {waiter.priority} queue is full at {capacity:,} waiters, and "
+            f"this request is sheddable, so it was dropped rather than queued. Nothing is "
+            f"wrong: the system is busy and this work said it could wait. Send it again "
+            f"later, or send it at a priority of zero or more if it cannot be dropped."
+        )
+        return Shed(message)
+    message = (
+        f"The priority {waiter.priority} queue is full at {capacity:,} waiters, so this "
+        f"request was refused rather than making the backlog longer. Capacity is per band, "
+        f"so other priorities are unaffected. Raise queue_capacity if the backlog is "
+        f"expected, raise the limits if it is not, or send this work at a negative priority "
+        f"so it is shed instead of refused."
     )
+    return AdmissionDenied(message)
 
 
 @dataclass(eq=False)
@@ -189,15 +205,17 @@ class WaitQueue:
         because selection takes the head.
 
         Raises:
-            AdmissionDenied: if this waiter's band is full.
+            Shed: if this waiter's band is full and the work is sheddable,
+                meaning its priority is negative.
+            AdmissionDenied: if this waiter's band is full and the work is not
+                sheddable.
         """
         band = self._bands.get(waiter.priority)
         if band is not None and len(band) >= self._capacity:
-            raise AdmissionDenied(
-                _full_message(waiter.priority, self._capacity),
-                binding_dimension=waiter.refusal.binding_dimension,
-                explanation=waiter.refusal.explanation,
-            )
+            refusal = _full(waiter, self._capacity)
+            refusal.binding_dimension = waiter.refusal.binding_dimension
+            refusal.explanation = waiter.refusal.explanation
+            raise refusal
         if band is None:
             band = self._bands.setdefault(waiter.priority, deque())
         waiter.sequence = next(self._sequence)
