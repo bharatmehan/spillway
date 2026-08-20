@@ -39,6 +39,10 @@ version is below 0.1, any release may change anything.
   and a replenished rate window, and on the earliest deadline, so nothing polls and nothing is
   missed. It starts with the first waiter and stops with the last, so a limiter that never blocks
   has no background task at all.
+- `admit()` waits for capacity when given a timeout or a deadline, instead of refusing straight
+  away. The reservation is attempted directly first and the queue is only reached on a refusal, so
+  the case where there is room pays nothing for the machinery. A timeout of zero, or a deadline
+  already passed, reports what actually happened rather than a wait that never took place.
 
 ## 0.0.2 (2026-08-18)
 

@@ -6,6 +6,7 @@ whether that call may go now.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -13,8 +14,10 @@ from types import TracebackType
 
 from spillway.core.clock import Clock, MonotonicClock
 from spillway.core.cost import Cost, Estimate, default_estimate
+from spillway.core.dispatcher import Dispatcher
 from spillway.core.errors import AdmissionDenied, ConfigurationError, LeaseExpired
 from spillway.core.lease import Lease, LeaseState
+from spillway.core.queue import Waiter, WaitQueue
 from spillway.core.scope import Priority, Scope
 from spillway.dimensions.base import Dimension, claim_key
 from spillway.observability.explain import AdmissionExplanation
@@ -116,6 +119,8 @@ class Spillway:
         self._dimensions = tuple(dimensions)
         self._store: DuplexStore = store if store is not None else MemoryStore(clock=self._clock)
         self._default_scope = Scope.of(scope)
+        self._queue = WaitQueue()
+        self._dispatcher = Dispatcher(limiter=self, queue=self._queue, clock=self._clock)
 
     def __repr__(self) -> str:
         """Show what is being enforced."""
@@ -317,7 +322,32 @@ class Spillway:
             dimensions=self._dimensions,
             store=self._store,
             explanation=explanation,
+            on_release=self._dispatcher.notify,
         )
+
+    def _deadline_ms(
+        self,
+        *,
+        timeout: float | None,
+        deadline: float | None,
+        now_ms: float,
+    ) -> float | None:
+        """When to stop waiting, on the limiter's clock.
+
+        A deadline that has already passed, which includes a timeout of zero,
+        means the caller asked not to wait, and the refusal reaches them
+        unchanged rather than dressed up as a timeout.
+
+        Returns:
+            The moment to give up, or None to wait for as long as it takes.
+        """
+        if deadline is not None:
+            return deadline * 1000.0
+        if timeout is not None:
+            return now_ms + timeout * 1000.0
+        # Waiting is opt in until there is a limiter level default to fall back
+        # on, so a caller who names neither gets today's behaviour.
+        return now_ms
 
     async def _acquire(
         self,
@@ -325,25 +355,70 @@ class Spillway:
         scope: Scope,
         priority: int,
         reserved: Cost,
+        timeout: float | None = None,
+        deadline: float | None = None,
     ) -> Lease:
-        """Reserve `reserved` across every dimension, or refuse.
+        """Reserve `reserved` across every dimension, waiting if allowed to.
+
+        The reservation is attempted directly first and the queue is only
+        reached on a refusal, so the case where there is room, which is nearly
+        every case, pays nothing at all for the machinery below.
 
         Raises:
-            AdmissionDenied: if any dimension has no room, or if the request is
-                larger than a limit and so could never have room.
+            AdmissionDenied: if there is no room and none arrives in time, or
+                if the request is larger than a limit and so could never have
+                room.
+            AdmissionTimeout: if the wait ran out first.
+            Shed: if the work is sheddable and its band is full.
         """
+        started_ms = self._clock.now_ms()
         claims, dimension_of_key = self._claims_for(
             scope=scope,
             priority=priority,
             reserved=reserved,
         )
-        return await self._attempt(
-            claims=claims,
-            dimension_of_key=dimension_of_key,
-            scope=scope,
-            priority=priority,
-            reserved=reserved,
+        deadline_ms = self._deadline_ms(
+            timeout=timeout,
+            deadline=deadline,
+            now_ms=started_ms,
         )
+        try:
+            return await self._attempt(
+                claims=claims,
+                dimension_of_key=dimension_of_key,
+                scope=scope,
+                priority=priority,
+                reserved=reserved,
+            )
+        except AdmissionDenied as refusal:
+            if deadline_ms is not None and deadline_ms <= self._clock.now_ms():
+                raise
+            return await self._wait_for_room(
+                Waiter(
+                    claims=claims,
+                    dimension_of_key=dimension_of_key,
+                    scope=scope,
+                    priority=priority,
+                    reserved=reserved,
+                    deadline_ms=deadline_ms,
+                    queued_at_ms=started_ms,
+                    future=asyncio.get_running_loop().create_future(),
+                    refusal=refusal,
+                    refused_at_ms=self._clock.now_ms(),
+                )
+            )
+
+    async def _wait_for_room(self, waiter: Waiter) -> Lease:
+        """Queue and wait until the dispatcher has an answer.
+
+        Raises:
+            AdmissionDenied: if the queue itself has no room for this waiter.
+            AdmissionTimeout: if the wait ran out.
+            Shed: if the work is sheddable and its band is full.
+        """
+        self._queue.push(waiter)
+        self._dispatcher.ensure_running()
+        return await waiter.future
 
 
 def _impossible_message(name: str, cost: float, limit: float) -> str:
@@ -433,12 +508,16 @@ class AdmitContext:
         is then the caller's responsibility and belongs in a finally block.
 
         Raises:
-            AdmissionDenied: if any dimension has no room.
+            AdmissionDenied: if there is no room and none arrives in time.
+            AdmissionTimeout: if the wait ran out.
+            Shed: if the work is sheddable and its band is full.
         """
         return await self._limiter._acquire(
             scope=self._scope,
             priority=self._priority,
             reserved=self._reserved(),
+            timeout=self._timeout,
+            deadline=self._deadline,
         )
 
     def _reserved(self) -> Cost:
