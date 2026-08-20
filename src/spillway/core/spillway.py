@@ -89,6 +89,13 @@ class Spillway:
     reports and never refuses anything, which is a reasonable first step for
     someone gathering evidence before choosing limits.
 
+    A request that finds no room waits for it rather than failing, for up to
+    `default_timeout` seconds, because capacity that is full now is usually
+    free shortly and a caller would rather wait than handle an error. Waiters
+    are served highest priority first and, within a priority, in the order they
+    arrived. Pass `timeout=0` for a request that should be refused rather than
+    delayed.
+
     Args:
         dimensions: The limits to enforce. Empty means enforce nothing.
         store: Where reservations are recorded. Defaults to an in memory store,

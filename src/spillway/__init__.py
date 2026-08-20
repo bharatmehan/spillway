@@ -4,6 +4,9 @@ Admission control across rate and concurrency, with capacity reserved from an
 estimate before a call and settled against the real cost after it, so the
 difference goes back immediately rather than at the end of a window.
 
+A call that finds no room waits for it, highest priority first, rather than
+failing on a limit that will have cleared in a second.
+
     from spillway import Concurrency, Rate, Spillway
 
     limiter = Spillway(
