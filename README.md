@@ -14,10 +14,12 @@ and behaviour included.
 
 What works today: admission control across request rate and concurrency in a single process, with
 capacity reserved before a call and settled against the real cost after it, and with waiting,
-priority and timeouts rather than a bare refusal.
+priority and timeouts rather than a bare refusal. Output length is predicted per route from what
+that route has actually produced, so a request reserves what most of its kind come in under
+instead of the maximum the caller allowed.
 
-What does not exist yet: occupancy, output length prediction, provider adapters, one limit shared
-across processes, and the synchronous API.
+What does not exist yet: occupancy, provider adapters, one limit shared across processes, and the
+synchronous API.
 
 If you want to know when that changes, watch this repository or read the changelog.
 

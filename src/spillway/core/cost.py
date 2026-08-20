@@ -329,8 +329,10 @@ estimate at settlement, exactly like a mistaken output prediction does.
 """
 
 # ponytail: a flat guess, wrong for both a one word classification and a long
-# report. Superseded per route once the estimator learns from settled requests.
-# Pass max_tokens, or an explicit Estimate, to bypass it entirely.
+# report. Reached only when a caller names no maximum and nothing has learned
+# their route yet. QuantileEstimator supersedes it per route from its thirtieth
+# observation onward, and passing max_tokens or an explicit Estimate bypasses it
+# outright.
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
 """Output tokens reserved when the caller names no maximum."""
 

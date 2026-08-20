@@ -34,6 +34,11 @@ from spillway.core.errors import ConfigurationError
 from spillway.estimators.base import Estimator, Observation, RequestContext
 from spillway.estimators.max_tokens import MaxTokensEstimator
 
+# ponytail: a bounded ring per route, with the quantile computed by sorting.
+# Memory is order of a thousand integers per route, so a deployment with many
+# thousands of distinct routes is the trigger to reconsider. A streaming
+# quantile sketch is the upgrade, and it is worth it only at that cardinality:
+# at these sample sizes a ring is more accurate, not less.
 DEFAULT_HISTORY = 1_000
 """How many recent output lengths to keep per route.
 
@@ -44,11 +49,6 @@ history that never forgot would answer today's question with last quarter's
 traffic.
 """
 
-# ponytail: a bounded ring per route, with the quantile computed by sorting.
-# Memory is order of a thousand integers per route, so a deployment with many
-# thousands of distinct routes is the trigger to reconsider. A streaming
-# quantile sketch is the upgrade, and it is worth it only at that cardinality:
-# at these sample sizes a ring is more accurate, not less.
 DEFAULT_MIN_SAMPLES = 30
 """How many observations a route needs before its own history is trusted.
 
@@ -79,12 +79,6 @@ last percent costs more than everything below it and reserving the maximum
 outright is the more honest way to ask for that.
 """
 
-# ponytail: a fixed band, one and a half times the promised overrun rate to
-# raise and half of it to lower, with a flat step. Narrower would move the
-# quantile on sampling noise and wider would leave a badly calibrated route
-# uncorrected for longer than it should be. Something proportional to the size
-# of the disagreement if a real workload shows the flat step converging too
-# slowly.
 STATISTICS_SPAN = 100
 """Roughly how many recent observations the reported ratios describe.
 
@@ -98,6 +92,12 @@ perfectly calibrated estimator as wasting several times the headroom it needs.
 The ring is already a recency window for the same reason. These follow it.
 """
 
+# ponytail: a fixed band, one and a half times the promised overrun rate to
+# raise and half of it to lower, with a flat step. Narrower would move the
+# quantile on sampling noise and wider would leave a badly calibrated route
+# uncorrected for longer than it should be. Something proportional to the size
+# of the disagreement if a real workload shows the flat step converging too
+# slowly.
 RAISE_ABOVE = 1.5
 """Raise the quantile when overruns exceed this multiple of what it promised."""
 
