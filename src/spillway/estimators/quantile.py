@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from spillway.core.cost import RESERVATION_QUANTILE, Distribution, Estimate, count_input
 from spillway.core.errors import ConfigurationError
-from spillway.estimators.base import Observation, RequestContext
+from spillway.estimators.base import Estimator, Observation, RequestContext
 from spillway.estimators.max_tokens import MaxTokensEstimator
 
 DEFAULT_HISTORY = 1_000
@@ -79,6 +79,13 @@ class QuantileEstimator:
         quantile: Which point of the history to reserve. See the table below.
         route_key: Groups requests whose output lengths belong together.
             Defaults to the model alone, which is weak on purpose.
+        min_samples: How many observations a route needs before its own history
+            is used. Below it, `fallback` answers.
+        fallback: What answers below the threshold. Defaults to reserving the
+            maximum the caller allowed, which is safe and expensive and exactly
+            right when nothing is known yet. Any estimator will do, so
+            `StaticEstimator` is the way to say "until you know better, reserve
+            five hundred".
         history: How many recent output lengths to keep per route.
 
     Choosing the quantile, which is the question everyone asks first:
@@ -96,7 +103,10 @@ class QuantileEstimator:
     moment the real figure is known, is the operating point worth defaulting to.
 
     Example:
-        >>> estimator = QuantileEstimator(route_key=lambda ctx: ctx.tags.get("task"))
+        >>> estimator = QuantileEstimator(
+        ...     route_key=lambda ctx: ctx.tags.get("task"),
+        ...     min_samples=5,
+        ... )
         >>> context = RequestContext(max_tokens=4_096, tags={"task": "summarise"})
 
         With no history, it reserves what the caller allowed.
@@ -126,13 +136,17 @@ class QuantileEstimator:
         *,
         quantile: float = RESERVATION_QUANTILE,
         route_key: Callable[[RequestContext], Hashable] = _by_model,
+        min_samples: int = DEFAULT_MIN_SAMPLES,
+        fallback: Estimator | None = None,
         history: int = DEFAULT_HISTORY,
     ) -> None:
         """Learn per route, reserving at `quantile`.
 
         Raises:
-            ConfigurationError: if `quantile` is outside [0, 1], or if
-                `history` is below one.
+            ConfigurationError: if `quantile` is outside [0, 1], if
+                `min_samples` is negative, if `history` is below one, or if
+                `min_samples` is above `history`, which would mean the
+                threshold could never be reached.
         """
         if not 0.0 <= quantile <= 1.0:
             message = (
@@ -148,11 +162,27 @@ class QuantileEstimator:
                 f"{DEFAULT_HISTORY:,} unless there is a reason not to."
             )
             raise ConfigurationError(message)
+        if min_samples < 0:
+            message = (
+                f"min_samples is how many observations a route needs before its own "
+                f"history is used, so it cannot be negative, got {min_samples}. Use 0 to "
+                f"trust a route from its very first observation."
+            )
+            raise ConfigurationError(message)
+        if min_samples > history:
+            message = (
+                f"min_samples is {min_samples:,} and history is {history:,}, so a route "
+                f"would forget its oldest observation before it ever reached the "
+                f"threshold and its own history would never be used at all. Lower "
+                f"min_samples, or raise history."
+            )
+            raise ConfigurationError(message)
         self._quantile = quantile
         self._route_key = route_key
+        self._min_samples = min_samples
         self._history = history
         self._routes: dict[Hashable, _Route] = {}
-        self._fallback = MaxTokensEstimator()
+        self._fallback: Estimator = fallback if fallback is not None else MaxTokensEstimator()
 
     def __repr__(self) -> str:
         """Show the quantile and how many routes have been seen."""
@@ -164,9 +194,15 @@ class QuantileEstimator:
         return 0 if route is None else len(route.ring)
 
     def estimate(self, context: RequestContext) -> Estimate:
-        """Reserve this route's own quantile, or fall back when it has no history."""
+        """Reserve this route's own quantile, or defer below the threshold.
+
+        Deferring rather than guessing, because a measurement that does not
+        exist yet must not bind. Reading a ninth decile off four samples would
+        hold back traffic on the strength of almost nothing, and being
+        confidently wrong is worse here than being safe and expensive.
+        """
         route = self._routes.get(self._route_key(context))
-        if route is None or not route.ring:
+        if route is None or len(route.ring) < max(self._min_samples, 1):
             return self._fallback.estimate(context)
         return Estimate(
             input=count_input(context.prompt),

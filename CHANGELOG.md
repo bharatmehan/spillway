@@ -52,6 +52,11 @@ version is below 0.1, any release may change anything.
 - The history per route is a bounded ring of recent output lengths, a thousand by default. Bounded
   because memory has to be, and recent because these distributions drift: a history that never
   forgot would answer today's question with last quarter's traffic.
+- A sample threshold on the quantile estimator, thirty observations by default, below which
+  another estimator answers instead. A measurement that does not exist yet must not bind: reading
+  a ninth decile off four samples would hold back traffic on the strength of almost nothing, and
+  being confidently wrong is worse there than being safe and expensive. The fallback is any
+  estimator, so "until you know better, reserve five hundred" is one argument.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
