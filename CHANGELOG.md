@@ -20,6 +20,10 @@ version is below 0.1, any release may change anything.
   less than the provider does buys nothing and guarantees a rate limit response nobody predicted.
 - `count_input`, the character heuristic on its own. Every estimator counts input the same way,
   and two of them counting it differently would be a difference no user could see or explain.
+- `StaticEstimator`, which predicts the same output length every time. Genuinely useful where
+  output length is genuinely predictable, such as a classifier answering with one of five labels
+  or an extractor filling a fixed schema. Input is still counted per request, because inventing
+  uncertainty about a number that can be counted would help nobody.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
