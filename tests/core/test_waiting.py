@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from spillway.core.clock import FakeClock
-from spillway.core.errors import AdmissionDenied, AdmissionTimeout
+from spillway.core.errors import AdmissionDenied, AdmissionTimeout, ConfigurationError
 from spillway.core.spillway import Spillway
 from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
@@ -170,3 +170,56 @@ async def test_the_common_case_never_touches_the_queue(clock):
     await limiter.admit(timeout=30).acquire()
     assert limiter._queue.depth == 0
     assert not limiter._dispatcher.running
+
+
+async def test_a_caller_who_names_no_timeout_waits_for_the_limiter_default(clock):
+    limiter = build(clock, [Rate("rpm", limit=1)])
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await until_sleeping(clock)
+    assert not waiting.done()
+    clock.advance(30_000)
+    with pytest.raises(AdmissionTimeout):
+        await asyncio.wait_for(waiting, 1.0)
+
+
+async def test_the_limiter_default_can_be_shortened(clock):
+    limiter = build(clock, [Rate("rpm", limit=1)], default_timeout=2.0)
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await until_sleeping(clock)
+    clock.advance(2_000)
+    with pytest.raises(AdmissionTimeout):
+        await asyncio.wait_for(waiting, 1.0)
+
+
+async def test_a_limiter_default_of_zero_refuses_rather_than_waits(clock):
+    limiter = build(clock, [Rate("rpm", limit=1)], default_timeout=0)
+    await limiter.admit().acquire()
+    with pytest.raises(AdmissionDenied) as raised:
+        await limiter.admit().acquire()
+    assert not isinstance(raised.value, AdmissionTimeout)
+
+
+async def test_a_limiter_default_of_none_waits_for_as_long_as_it_takes(clock):
+    limiter = build(clock, [Rate("rpm", limit=1)], default_timeout=None)
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await until_sleeping(clock)
+    clock.advance(300_000)
+    await asyncio.wait_for(waiting, 1.0)
+
+
+async def test_a_call_level_timeout_beats_the_limiter_default(clock):
+    limiter = build(clock, [Rate("rpm", limit=1)], default_timeout=None)
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit(timeout=5).acquire())
+    await until_sleeping(clock)
+    clock.advance(5_000)
+    with pytest.raises(AdmissionTimeout):
+        await asyncio.wait_for(waiting, 1.0)
+
+
+def test_a_negative_default_timeout_is_a_configuration_error(clock):
+    with pytest.raises(ConfigurationError, match="cannot be negative"):
+        build(clock, [], default_timeout=-1)

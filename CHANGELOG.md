@@ -43,6 +43,15 @@ version is below 0.1, any release may change anything.
   away. The reservation is attempted directly first and the queue is only reached on a refusal, so
   the case where there is room pays nothing for the machinery. A timeout of zero, or a deadline
   already passed, reports what actually happened rather than a wait that never took place.
+- A limiter level `default_timeout`, thirty seconds, applied when a caller names neither a timeout
+  nor a deadline. Waiting for ever is almost never what anyone meant, and it is the failure that
+  looks like the library hanging rather than like a limit being reached. Set it to zero to refuse
+  rather than wait, or to None to wait for as long as it takes.
+
+### Changed
+
+- A request that finds no room now waits up to thirty seconds for it by default, where before it
+  was refused immediately. Pass `default_timeout=0` for the previous behaviour.
 
 ## 0.0.2 (2026-08-18)
 

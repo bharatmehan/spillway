@@ -30,6 +30,9 @@ def limiter(clock, store):
         store=store,
         clock=clock,
         scope="tenant:acme",
+        # These are tests of the decision, not of the waiting. Anything refused
+        # is refused here and now, rather than queueing for the default wait.
+        default_timeout=0,
     )
 
 

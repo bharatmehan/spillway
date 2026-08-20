@@ -49,6 +49,16 @@ predicted from history.
 DEFAULT_LEASE_TTL_MS = 60_000.0
 """How long a reservation may go unsettled before its capacity is reclaimed."""
 
+DEFAULT_TIMEOUT_S = 30.0
+"""How long a caller who names no timeout waits before giving up.
+
+Waiting for ever is almost never what anyone meant, and it is the failure that
+looks like the library hanging rather than like a limit being reached. Thirty
+seconds is long enough to ride out an ordinary burst and short enough that a
+request stuck behind something pathological still returns an error somebody can
+read. Pass `default_timeout=None` to wait for as long as it takes.
+"""
+
 
 @dataclass(frozen=True)
 class Snapshot:
@@ -85,6 +95,9 @@ class Spillway:
             which is correct within one process and not across several.
         clock: Where time comes from.
         scope: The scope used when a caller names none.
+        default_timeout: How many seconds to wait for capacity when a caller
+            names neither a timeout nor a deadline. Zero refuses rather than
+            waits. None waits for as long as it takes.
 
     Example:
         >>> import asyncio
@@ -113,8 +126,21 @@ class Spillway:
         store: DuplexStore | None = None,
         clock: Clock | None = None,
         scope: str | Scope | None = None,
+        default_timeout: float | None = DEFAULT_TIMEOUT_S,
     ) -> None:
-        """Assemble a limiter. Every argument has a usable default."""
+        """Assemble a limiter. Every argument has a usable default.
+
+        Raises:
+            ConfigurationError: if `default_timeout` is negative.
+        """
+        if default_timeout is not None and default_timeout < 0:
+            message = (
+                f"default_timeout is how many seconds to wait, so it cannot be negative, "
+                f"got {default_timeout}. Use 0 to refuse rather than wait, or None to wait "
+                f"for as long as it takes."
+            )
+            raise ConfigurationError(message)
+        self._default_timeout = default_timeout
         self._clock: Clock = clock if clock is not None else MonotonicClock()
         self._dimensions = tuple(dimensions)
         self._store: DuplexStore = store if store is not None else MemoryStore(clock=self._clock)
@@ -155,7 +181,8 @@ class Spillway:
             prompt: Used to count input tokens when no estimate is given.
             max_tokens: The requested output limit.
             model: Recorded on the estimate when known.
-            timeout: How many seconds to wait for capacity. Mutually
+            timeout: How many seconds to wait for capacity. Defaults to the
+                limiter's own. Zero refuses rather than waits. Mutually
                 exclusive with `deadline`.
             deadline: A fixed point to give up at, in seconds on the same
                 monotonic scale the standard library reports. Mutually
@@ -345,9 +372,9 @@ class Spillway:
             return deadline * 1000.0
         if timeout is not None:
             return now_ms + timeout * 1000.0
-        # Waiting is opt in until there is a limiter level default to fall back
-        # on, so a caller who names neither gets today's behaviour.
-        return now_ms
+        if self._default_timeout is None:
+            return None
+        return now_ms + self._default_timeout * 1000.0
 
     async def _acquire(
         self,
