@@ -242,6 +242,8 @@ class Dispatcher:
                 scope=waiter.scope,
                 priority=waiter.priority,
                 reserved=waiter.reserved,
+                waited_ms=self._clock.now_ms() - waiter.queued_at_ms,
+                queue_position=waiter.position,
             )
         except AdmissionDenied as refusal:
             waiter.refusal = refusal

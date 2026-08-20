@@ -54,6 +54,9 @@ version is below 0.1, any release may change anything.
   than waiting on a dispatcher that is no longer there.
 - `queue_capacity` and `queue_full_policy` on the limiter, so the bound on each band and what a
   full band does with a new arrival are both things a caller sets rather than things they discover.
+- Real wait times and queue positions on the lease and its explanation. The question "why was this
+  request three seconds slow" is now answered by a value already in hand, naming the dimension that
+  bound, how full it was, and how many requests were ahead in the queue.
 
 ### Changed
 

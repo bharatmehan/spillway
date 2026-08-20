@@ -339,3 +339,49 @@ def test_an_unknown_queue_full_policy_is_a_configuration_error(clock):
 def test_a_queue_with_no_room_at_all_is_a_configuration_error(clock):
     with pytest.raises(ConfigurationError, match="at least one waiter"):
         build(clock, [], queue_capacity=0)
+
+
+async def test_a_lease_reports_how_long_it_actually_waited(clock):
+    # The answer to "why was this request three seconds slow" should be a value
+    # already in hand rather than an investigation.
+    limiter = build(clock, [Rate("rpm", limit=1)], default_timeout=120)
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await until_sleeping(clock)
+    clock.advance(60_000)
+    lease = await asyncio.wait_for(waiting, 1.0)
+    assert lease.waited_ms == pytest.approx(60_000.0)
+    assert lease.explain.waited_ms == pytest.approx(60_000.0)
+
+
+async def test_a_request_that_did_not_wait_reports_no_wait(clock):
+    limiter = build(clock, [Rate("rpm", limit=60)])
+    lease = await limiter.admit().acquire()
+    assert lease.waited_ms == 0.0
+    assert lease.explain.queue_position is None
+
+
+async def test_a_lease_reports_how_many_were_ahead_of_it(clock):
+    limiter = build(clock, [Concurrency("generations", limit=1)])
+    held = await limiter.admit().acquire()
+    first = asyncio.ensure_future(limiter.admit().acquire())
+    await spin()
+    second = asyncio.ensure_future(limiter.admit().acquire())
+    await spin()
+    held.settle(input=0, output=0)
+    lease = await asyncio.wait_for(first, 1.0)
+    assert lease.explain.queue_position == 0
+    lease.settle(input=0, output=0)
+    behind = await asyncio.wait_for(second, 1.0)
+    assert behind.explain.queue_position == 1
+
+
+async def test_an_explanation_reads_as_a_sentence_about_the_wait(clock):
+    limiter = build(clock, [Rate("rpm", limit=1)], default_timeout=120)
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await until_sleeping(clock)
+    clock.advance(60_000)
+    lease = await asyncio.wait_for(waiting, 1.0)
+    assert "waited 60000ms" in str(lease.explain)
+    assert "queued at 0" in str(lease.explain)

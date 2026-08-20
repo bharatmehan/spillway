@@ -308,12 +308,18 @@ class Spillway:
         scope: Scope,
         priority: int,
         reserved: Cost,
+        waited_ms: float = 0.0,
+        queue_position: int | None = None,
     ) -> Lease:
         """Ask the store for the whole batch once, and report what happened.
 
         One attempt, no waiting. Both the direct path and the dispatcher go
         through here, so a request that waited is admitted by exactly the same
         code as one that did not.
+
+        The wait and the queue position are passed in rather than worked out
+        here, because this is the one place that does not know whether there
+        was a queue at all.
 
         Raises:
             AdmissionDenied: if any dimension has no room. It carries the
@@ -335,7 +341,9 @@ class Spillway:
             admitted=result.granted,
             scope=scope.key,
             priority=priority,
+            waited_ms=waited_ms,
             binding_dimension=binding,
+            queue_position=queue_position,
             dimensions={
                 dimension_of_key[key]: used
                 for key, used in result.utilisation.items()
@@ -360,6 +368,7 @@ class Spillway:
             dimensions=self._dimensions,
             store=self._store,
             explanation=explanation,
+            waited_ms=waited_ms,
             on_release=self._dispatcher.notify,
         )
 
