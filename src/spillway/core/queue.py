@@ -18,10 +18,29 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from spillway.core.cost import Cost
-from spillway.core.errors import AdmissionDenied
+from spillway.core.errors import AdmissionDenied, ConfigurationError
 from spillway.core.lease import Lease
 from spillway.core.scope import Scope
 from spillway.stores.base import Claim
+
+DEFAULT_QUEUE_CAPACITY = 10_000
+"""How many waiters one priority band holds before it refuses new arrivals.
+
+Large enough that reaching it means something is wrong rather than busy, and
+small enough that the backlog cannot quietly become the reason the process runs
+out of memory.
+"""
+
+
+def _full_message(priority: int, capacity: int) -> str:
+    """Say that the backlog is the problem, not the limit."""
+    return (
+        f"The priority {priority} queue is full at {capacity:,} waiters, so this request "
+        f"was refused rather than making the backlog longer. Capacity is per band, so "
+        f"other priorities are unaffected. Raise queue_capacity if the backlog is expected, "
+        f"raise the limits if it is not, or send this work at a negative priority so it is "
+        f"shed instead of queued."
+    )
 
 
 @dataclass(eq=False)
@@ -88,6 +107,15 @@ class WaitQueue:
     One queue per limiter. Strictly by priority band, and first in first out
     within a band, which is the whole of the ordering policy for now.
 
+    Capacity is per band rather than shared. A flood of batch work must not
+    consume the slots an interactive request needs, and that is a real failure
+    mode rather than a hypothetical one. A queue with no bound at all is a
+    memory leak with extra steps: it turns a rate limit problem into an out of
+    memory problem, which is strictly worse.
+
+    Args:
+        capacity: The most waiters one band may hold.
+
     Example:
         >>> import asyncio
         >>> def waiting(priority: int) -> Waiter:
@@ -117,8 +145,21 @@ class WaitQueue:
         [100, 0, 0]
     """
 
-    def __init__(self) -> None:
-        """Start with nobody waiting."""
+    def __init__(self, *, capacity: int = DEFAULT_QUEUE_CAPACITY) -> None:
+        """Start with nobody waiting, and room for `capacity` in each band.
+
+        Raises:
+            ConfigurationError: if `capacity` is not at least one, which would
+                mean nothing could ever queue.
+        """
+        if capacity < 1:
+            message = (
+                f"A queue band needs room for at least one waiter, got capacity={capacity}. "
+                f"A capacity of zero refuses everything that cannot be admitted immediately, "
+                f"which is what leaving out the timeout already does."
+            )
+            raise ConfigurationError(message)
+        self._capacity = capacity
         # One band per distinct priority, created on first use and dropped once
         # it empties, so the bands present are exactly the bands with someone
         # in them.
@@ -146,8 +187,19 @@ class WaitQueue:
         Records the arrival order and how many were already ahead of it, which
         is the number worth reporting later: at selection it is always zero,
         because selection takes the head.
+
+        Raises:
+            AdmissionDenied: if this waiter's band is full.
         """
-        band = self._bands.setdefault(waiter.priority, deque())
+        band = self._bands.get(waiter.priority)
+        if band is not None and len(band) >= self._capacity:
+            raise AdmissionDenied(
+                _full_message(waiter.priority, self._capacity),
+                binding_dimension=waiter.refusal.binding_dimension,
+                explanation=waiter.refusal.explanation,
+            )
+        if band is None:
+            band = self._bands.setdefault(waiter.priority, deque())
         waiter.sequence = next(self._sequence)
         waiter.position = len(band)
         band.append(waiter)

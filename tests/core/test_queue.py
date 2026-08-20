@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from spillway.core.cost import Cost
-from spillway.core.errors import AdmissionDenied
+from spillway.core.errors import AdmissionDenied, ConfigurationError
 from spillway.core.queue import Waiter, WaitQueue
 from spillway.core.scope import Scope
 
@@ -141,3 +141,46 @@ async def test_the_repr_shows_the_bands_highest_first(queue):
     queue.push(waiting(priority=0))
     queue.push(waiting(priority=100))
     assert repr(queue) == "WaitQueue({100: 1, 0: 1})"
+
+
+async def test_a_full_band_refuses_a_new_arrival():
+    queue = WaitQueue(capacity=2)
+    queue.push(waiting())
+    queue.push(waiting())
+    with pytest.raises(AdmissionDenied, match="queue is full"):
+        queue.push(waiting())
+    assert queue.depth == 2
+
+
+async def test_capacity_is_per_band_not_shared():
+    # A flood of batch work must not consume the slots an interactive request
+    # needs. This is the whole reason capacity is counted per band.
+    queue = WaitQueue(capacity=1)
+    queue.push(waiting(priority=-100))
+    queue.push(waiting(priority=100))
+    assert queue.depths() == {-100: 1, 100: 1}
+
+
+async def test_a_refused_arrival_leaves_no_empty_band_behind():
+    queue = WaitQueue(capacity=1)
+    with pytest.raises(AdmissionDenied):
+        queue.push(waiting(priority=0))
+        queue.push(waiting(priority=0))
+    queue.remove(queue.select())
+    assert queue.depths() == {}
+
+
+async def test_a_full_band_frees_up_once_a_waiter_leaves():
+    queue = WaitQueue(capacity=1)
+    first = waiting()
+    queue.push(first)
+    with pytest.raises(AdmissionDenied):
+        queue.push(waiting())
+    queue.remove(first)
+    queue.push(waiting())
+    assert queue.depth == 1
+
+
+def test_a_queue_with_no_room_at_all_is_a_configuration_error():
+    with pytest.raises(ConfigurationError, match="at least one waiter"):
+        WaitQueue(capacity=0)
