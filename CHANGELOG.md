@@ -92,6 +92,11 @@ version is below 0.1, any release may change anything.
   never negative, and it is absent rather than infinite when a request generated nothing. An
   infinity there would poison every number a user reads afterwards, including the one the
   adaptive quantile would have moved on.
+- A behavioural gate over a synthetic bimodal workload, run once reserving the maximum a caller
+  allowed and once reserving what the route has been producing. The second fits several times more
+  concurrent requests under the same limit, its overrun rate settles near what its quantile
+  promised, and its reservation stops moving. Assertions are on the direction of the difference,
+  never on a throughput number nobody could defend.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
