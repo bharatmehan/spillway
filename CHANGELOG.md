@@ -34,6 +34,11 @@ version is below 0.1, any release may change anything.
 - A callback on the lease, called once whichever way it finishes. Capacity coming back is the
   event somebody else is waiting for, and finding out by asking again on a timer would make every
   queued request pay for the delay.
+- The dispatch loop: one task per limiter, which picks the best waiter, asks for its capacity, and
+  hands over a lease or waits. It waits on both of the ways capacity appears at once, a release
+  and a replenished rate window, and on the earliest deadline, so nothing polls and nothing is
+  missed. It starts with the first waiter and stops with the last, so a limiter that never blocks
+  has no background task at all.
 
 ## 0.0.2 (2026-08-18)
 

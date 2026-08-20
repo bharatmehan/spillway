@@ -89,6 +89,10 @@ class Waiter:
         refusal: The refusal that put this waiter here, replaced by each later
             attempt. A timeout is reported with it, so it names the dimension
             that bound rather than merely saying time ran out.
+        refused_at_ms: When that refusal was made. A rate refusal says how long
+            until the charge would fit, and that answer shrinks with every
+            millisecond that passes, so reporting it later needs to know how
+            much later.
         sequence: Arrival order across the whole queue, assigned on push.
         position: How many were ahead of it in its own band on arrival.
 
@@ -120,6 +124,7 @@ class Waiter:
     queued_at_ms: float
     future: asyncio.Future[Lease] = field(repr=False)
     refusal: AdmissionDenied
+    refused_at_ms: float = 0.0
     sequence: int = 0
     position: int = 0
 
