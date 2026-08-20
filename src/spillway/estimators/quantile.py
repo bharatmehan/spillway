@@ -58,6 +58,40 @@ strength of almost nothing, which is worse than the safe and expensive answer.
 """
 
 
+DEFAULT_ADAPT_EVERY = 100
+"""How many observations one route collects before its quantile may move.
+
+A quantile that moves per request is an oscillation, and an oscillating
+estimator is worse than a fixed conservative one. A hundred observations puts
+the overrun count in double figures at the ninth decile, which is enough for the
+share to mean something.
+"""
+
+DEFAULT_ADAPT_STEP = 0.02
+"""How far the quantile moves when it moves. Small, and in one direction only."""
+
+DEFAULT_QUANTILE_BOUNDS = (0.5, 0.99)
+"""How far the quantile may travel in either direction.
+
+The floor is where overrunning half the time begins, which defeats the limit.
+The ceiling is short of one because these distributions are heavy tailed, so the
+last percent costs more than everything below it and reserving the maximum
+outright is the more honest way to ask for that.
+"""
+
+# ponytail: a fixed band, one and a half times the promised overrun rate to
+# raise and half of it to lower, with a flat step. Narrower would move the
+# quantile on sampling noise and wider would leave a badly calibrated route
+# uncorrected for longer than it should be. Something proportional to the size
+# of the disagreement if a real workload shows the flat step converging too
+# slowly.
+RAISE_ABOVE = 1.5
+"""Raise the quantile when overruns exceed this multiple of what it promised."""
+
+LOWER_BELOW = 0.5
+"""Lower the quantile when overruns fall below this multiple of what it promised."""
+
+
 def _by_model(context: RequestContext) -> Hashable:
     """Group by the model alone.
 
@@ -93,6 +127,8 @@ class _Route:
     overruns: int = 0
     error_ratio_sum: float = 0.0
     error_ratio_count: int = 0
+    since_adapt: int = 0
+    overruns_since_adapt: int = 0
 
 
 @dataclass(frozen=True)
@@ -143,6 +179,14 @@ class QuantileEstimator:
             `StaticEstimator` is the way to say "until you know better, reserve
             five hundred".
         history: How many recent output lengths to keep per route.
+        adapt_quantile: Whether a route may move its own quantile when the
+            overruns it sees stop matching the ones it promised. Off by
+            default: it is worth turning on once a workload has settled, and it
+            is not worth turning on before anyone knows what the workload is.
+        adapt_every: How many observations a route collects before its quantile
+            may move again.
+        adapt_step: How far it moves when it moves.
+        quantile_bounds: How far it may travel, as a low and a high.
 
     Choosing the quantile, which is the question everyone asks first:
 
@@ -195,6 +239,10 @@ class QuantileEstimator:
         min_samples: int = DEFAULT_MIN_SAMPLES,
         fallback: Estimator | None = None,
         history: int = DEFAULT_HISTORY,
+        adapt_quantile: bool = False,
+        adapt_every: int = DEFAULT_ADAPT_EVERY,
+        adapt_step: float = DEFAULT_ADAPT_STEP,
+        quantile_bounds: tuple[float, float] = DEFAULT_QUANTILE_BOUNDS,
     ) -> None:
         """Learn per route, reserving at `quantile`.
 
@@ -202,7 +250,9 @@ class QuantileEstimator:
             ConfigurationError: if `quantile` is outside [0, 1], if
                 `min_samples` is negative, if `history` is below one, or if
                 `min_samples` is above `history`, which would mean the
-                threshold could never be reached.
+                threshold could never be reached. Also if `adapt_every` is
+                below one, if `adapt_step` is not positive, or if
+                `quantile_bounds` is not an ordered pair inside [0, 1].
         """
         if not 0.0 <= quantile <= 1.0:
             message = (
@@ -233,9 +283,37 @@ class QuantileEstimator:
                 f"min_samples, or raise history."
             )
             raise ConfigurationError(message)
+        low, high = quantile_bounds
+        if not 0.0 <= low <= high <= 1.0:
+            message = (
+                f"quantile_bounds is how far the quantile may travel, as a low and a high, "
+                f"so it must be ordered and inside [0, 1], got {quantile_bounds}. The "
+                f"default of {DEFAULT_QUANTILE_BOUNDS} keeps it between overrunning half "
+                f"the time and reserving very nearly the worst case."
+            )
+            raise ConfigurationError(message)
+        if adapt_every < 1:
+            message = (
+                f"adapt_every is how many observations a route collects before its "
+                f"quantile may move again, so it must be at least one, got {adapt_every}. "
+                f"A quantile that moves per request is an oscillation, so the default of "
+                f"{DEFAULT_ADAPT_EVERY} is deliberately slow."
+            )
+            raise ConfigurationError(message)
+        if adapt_step <= 0.0:
+            message = (
+                f"adapt_step is how far the quantile moves when it moves, so it must be "
+                f"positive, got {adapt_step}. Pass adapt_quantile=False to hold the "
+                f"quantile still instead."
+            )
+            raise ConfigurationError(message)
         self._quantile = quantile
         self._route_key = route_key
         self._min_samples = min_samples
+        self._adapt_quantile = adapt_quantile
+        self._adapt_every = adapt_every
+        self._adapt_step = adapt_step
+        self._quantile_bounds = quantile_bounds
         self._history = history
         self._routes: dict[Hashable, _Route] = {}
         self._fallback: Estimator = fallback if fallback is not None else MaxTokensEstimator()
@@ -296,12 +374,43 @@ class QuantileEstimator:
         route.observations += 1
         if actual > reserved:
             route.overruns += 1
+            route.overruns_since_adapt += 1
         if actual > 0:
             # Skipped rather than recorded when nothing was generated. Reserved
             # over zero is undefined, and calling it infinite would poison the
             # average with a number that means nothing.
             route.error_ratio_sum += reserved / actual
             route.error_ratio_count += 1
+        if self._adapt_quantile:
+            self._maybe_adapt(route)
+
+    def _maybe_adapt(self, route: _Route) -> None:
+        """Move this route's quantile if the last window disagreed with it.
+
+        The overrun rate drives both directions, and the estimate error ratio
+        deliberately drives neither. The overrun rate measures the promise the
+        quantile makes: reserving at the ninth decile is a claim that about one
+        request in ten will run over, and it is either true or it is not. The
+        error ratio measures how wide the distribution is, which on a heavy
+        tailed route is large however well calibrated the quantile is. Lowering
+        the quantile because a route is wide would walk it down through a range
+        where nothing changes at all, then off the far side of a mode, and
+        overrun half the traffic at once. That is the oscillation this whole
+        mechanism is rate limited to avoid, so it must not be the thing that
+        causes it.
+        """
+        route.since_adapt += 1
+        if route.since_adapt < self._adapt_every:
+            return
+        low, high = self._quantile_bounds
+        promised = 1.0 - route.quantile
+        seen = route.overruns_since_adapt / route.since_adapt
+        if seen > promised * RAISE_ABOVE:
+            route.quantile = min(route.quantile + self._adapt_step, high)
+        elif seen < promised * LOWER_BELOW:
+            route.quantile = max(route.quantile - self._adapt_step, low)
+        route.since_adapt = 0
+        route.overruns_since_adapt = 0
 
     def serialise(self) -> dict[Hashable, tuple[int, ...]]:
         """Hand back every route's history, as plain containers.

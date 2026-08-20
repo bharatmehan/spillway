@@ -69,6 +69,15 @@ version is below 0.1, any release may change anything.
   change later rather than a redesign. A merge concatenates and then thins evenly, so two workers
   that have each seen half the traffic end up agreeing about all of it rather than one replacing
   the other.
+- An adaptive quantile, off by default. When a route's overruns stop matching the share its
+  quantile promised, the quantile moves, by a small step, at most once per hundred observations,
+  and only within bounds. A quantile that moved per request would be an oscillation, and an
+  oscillating estimator is worse than a fixed conservative one.
+- Only the overrun rate moves it, in either direction. The estimate error ratio is reported and
+  deliberately does not steer: on a heavy tailed route it is large however well calibrated the
+  quantile is, and lowering the quantile because a route is wide would walk it down through a
+  range where nothing changes, then off the far side of a mode, and overrun most of the traffic
+  at once.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing

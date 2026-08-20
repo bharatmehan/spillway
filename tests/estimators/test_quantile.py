@@ -333,3 +333,123 @@ def test_merging_nothing_changes_nothing():
     before = estimator.serialise()
     estimator.merge({})
     assert estimator.serialise() == before
+
+
+def adapting(**kwargs):
+    return QuantileEstimator(
+        min_samples=1, adapt_quantile=True, adapt_every=10, adapt_step=0.02, **kwargs
+    )
+
+
+def test_the_quantile_holds_still_unless_it_is_told_it_may_move():
+    # Off by default. It is worth turning on once a workload has settled, and
+    # not worth turning on before anyone knows what the workload is.
+    estimator = QuantileEstimator(min_samples=1)
+    context = RequestContext(model="claude")
+    teach(estimator, context, [900] * 500, reserved=100)
+    assert estimator.statistics(context).quantile == 0.9
+
+
+def test_the_quantile_rises_when_too_many_requests_overrun():
+    estimator = adapting()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [900] * 10, reserved=100)
+    assert estimator.statistics(context).quantile == pytest.approx(0.92)
+
+
+def test_the_quantile_falls_when_almost_nothing_overruns():
+    # Reserving at the ninth decile promises about one in ten. Seeing none at
+    # all over a whole window means the reservation is above everything, and
+    # holding that much is waste nobody asked for.
+    estimator = adapting()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [10] * 10, reserved=100)
+    assert estimator.statistics(context).quantile == pytest.approx(0.88)
+
+
+def test_an_overrun_rate_near_what_was_promised_moves_nothing():
+    # A route seeing exactly the overruns its quantile promised is calibrated,
+    # and a mechanism that fiddled with it anyway would be the oscillation this
+    # is meant to avoid.
+    estimator = adapting()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [900], reserved=100)
+    teach(estimator, context, [10] * 9, reserved=100)
+    assert estimator.statistics(context).quantile == 0.9
+
+
+def test_a_wide_route_that_is_calibrated_is_left_alone():
+    # Nine requests at 100 tokens and one at 4000, reserved at 3000. Reserved
+    # over actual averages far above one, which looks like waste and is not:
+    # the overruns land exactly where the ninth decile said they would, one in
+    # ten. Lowering the quantile on the strength of the error ratio would walk
+    # it down through a range where nothing changes, then off the far side of
+    # the lower mode, and overrun nine requests in ten at once.
+    estimator = adapting()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [100] * 9, reserved=3_000)
+    teach(estimator, context, [4_000], reserved=3_000)
+    stats = estimator.statistics(context)
+    assert stats.error_ratio > 5
+    assert stats.overrun_ratio == pytest.approx(0.1)
+    assert stats.quantile == 0.9
+
+
+def test_the_quantile_moves_once_per_window_at_most():
+    estimator = adapting()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [900] * 9, reserved=100)
+    assert estimator.statistics(context).quantile == 0.9
+    teach(estimator, context, [900], reserved=100)
+    assert estimator.statistics(context).quantile == pytest.approx(0.92)
+
+
+def test_the_quantile_stops_at_its_ceiling():
+    estimator = adapting(quantile=0.98, quantile_bounds=(0.5, 0.99))
+    context = RequestContext(model="claude")
+    for _ in range(20):
+        teach(estimator, context, [900] * 10, reserved=100)
+    assert estimator.statistics(context).quantile == pytest.approx(0.99)
+
+
+def test_the_quantile_stops_at_its_floor():
+    estimator = adapting(quantile=0.52, quantile_bounds=(0.5, 0.99))
+    context = RequestContext(model="claude")
+    for _ in range(20):
+        teach(estimator, context, [10] * 10, reserved=100)
+    assert estimator.statistics(context).quantile == pytest.approx(0.5)
+
+
+def test_each_route_adapts_on_its_own():
+    estimator = adapting(route_key=lambda ctx: ctx.tags.get("task"))
+    busy = RequestContext(tags={"task": "busy"})
+    quiet = RequestContext(tags={"task": "quiet"})
+    teach(estimator, busy, [900] * 10, reserved=100)
+    teach(estimator, quiet, [10] * 5, reserved=100)
+    assert estimator.statistics(busy).quantile == pytest.approx(0.92)
+    assert estimator.statistics(quiet).quantile == 0.9
+
+
+def test_an_adapted_quantile_is_what_gets_reserved():
+    # A calibration the reservation ignored would be no calibration at all.
+    estimator = adapting()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [900] * 10, reserved=100)
+    assert estimator.estimate(context).quantile == pytest.approx(0.92)
+
+
+@pytest.mark.parametrize("bounds", [(0.9, 0.5), (-0.1, 0.9), (0.5, 1.1)])
+def test_bounds_that_are_not_an_ordered_pair_inside_the_unit_interval_are_refused(bounds):
+    with pytest.raises(ConfigurationError, match="ordered and inside"):
+        QuantileEstimator(quantile_bounds=bounds)
+
+
+def test_an_adjustment_interval_below_one_is_refused():
+    with pytest.raises(ConfigurationError, match="at least one"):
+        QuantileEstimator(adapt_every=0)
+
+
+@pytest.mark.parametrize("step", [0.0, -0.1])
+def test_a_step_that_is_not_positive_is_refused(step):
+    with pytest.raises(ConfigurationError, match="must be positive"):
+        QuantileEstimator(adapt_step=step)
