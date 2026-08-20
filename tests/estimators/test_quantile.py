@@ -206,9 +206,10 @@ def test_a_route_nobody_has_seen_has_no_statistics():
 def test_the_overrun_ratio_counts_settlements_that_used_more_than_was_reserved():
     estimator = QuantileEstimator()
     context = RequestContext(model="claude")
-    teach(estimator, context, [50] * 9, reserved=100)
-    teach(estimator, context, [900], reserved=100)
-    assert estimator.statistics(context).overrun_ratio == pytest.approx(0.1)
+    for _ in range(100):
+        teach(estimator, context, [50] * 9, reserved=100)
+        teach(estimator, context, [900], reserved=100)
+    assert estimator.statistics(context).overrun_ratio == pytest.approx(0.1, abs=0.05)
 
 
 def test_reserving_exactly_what_was_used_is_not_an_overrun():
@@ -224,8 +225,23 @@ def test_reserving_exactly_what_was_used_is_not_an_overrun():
 def test_the_error_ratio_averages_reserved_over_actual():
     estimator = QuantileEstimator()
     context = RequestContext(model="claude")
-    teach(estimator, context, [100, 200], reserved=400)
-    assert estimator.statistics(context).error_ratio == pytest.approx(3.0)
+    # Ratios of 4 and 2, alternating, so the weighted average sits near 3.
+    for _ in range(500):
+        teach(estimator, context, [100, 200], reserved=400)
+    assert estimator.statistics(context).error_ratio == pytest.approx(3.0, abs=0.2)
+
+
+def test_the_ratios_describe_recent_traffic_rather_than_all_of_it():
+    # A route spends its opening requests reserving the maximum, because it has
+    # no history to read yet. A lifetime average would carry that period for
+    # thousands of settlements and report a perfectly calibrated estimator as
+    # wasting several times the headroom it needs.
+    estimator = QuantileEstimator()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [120] * 30, reserved=4_096)
+    assert estimator.statistics(context).error_ratio > 20
+    teach(estimator, context, [120] * 500, reserved=120)
+    assert estimator.statistics(context).error_ratio == pytest.approx(1.0, abs=0.05)
 
 
 def test_the_error_ratio_is_undefined_rather_than_infinite_when_nothing_was_generated():
@@ -387,11 +403,12 @@ def test_a_wide_route_that_is_calibrated_is_left_alone():
     # the lower mode, and overrun nine requests in ten at once.
     estimator = adapting()
     context = RequestContext(model="claude")
-    teach(estimator, context, [100] * 9, reserved=3_000)
-    teach(estimator, context, [4_000], reserved=3_000)
+    for _ in range(50):
+        teach(estimator, context, [100] * 9, reserved=3_000)
+        teach(estimator, context, [4_000], reserved=3_000)
     stats = estimator.statistics(context)
     assert stats.error_ratio > 5
-    assert stats.overrun_ratio == pytest.approx(0.1)
+    assert stats.overrun_ratio == pytest.approx(0.1, abs=0.05)
     assert stats.quantile == 0.9
 
 

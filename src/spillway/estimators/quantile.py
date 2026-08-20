@@ -85,6 +85,19 @@ outright is the more honest way to ask for that.
 # uncorrected for longer than it should be. Something proportional to the size
 # of the disagreement if a real workload shows the flat step converging too
 # slowly.
+STATISTICS_SPAN = 100
+"""Roughly how many recent observations the reported ratios describe.
+
+Both ratios are weighted over this span rather than averaged over everything a
+route has ever seen. A lifetime average is the wrong answer here and it is wrong
+for a long time: a route that spent its first thirty requests reserving the
+maximum, because it had no history to read yet, carries that period in its
+lifetime error ratio for thousands of requests afterwards and reports a
+perfectly calibrated estimator as wasting several times the headroom it needs.
+
+The ring is already a recency window for the same reason. These follow it.
+"""
+
 RAISE_ABOVE = 1.5
 """Raise the quantile when overruns exceed this multiple of what it promised."""
 
@@ -125,10 +138,25 @@ class _Route:
     quantile: float
     observations: int = 0
     overruns: int = 0
-    error_ratio_sum: float = 0.0
-    error_ratio_count: int = 0
+    overrun_ratio: float = 0.0
+    error_ratio: float | None = None
     since_adapt: int = 0
     overruns_since_adapt: int = 0
+
+    def weigh_in(self, attribute: str, sample: float) -> None:
+        """Fold `sample` into an exponentially weighted average.
+
+        The first sample stands on its own rather than being averaged against a
+        zero that never happened. Starting from zero would have every route
+        climb up from nothing over its first hundred requests, which reads
+        exactly like a route that has only just started behaving.
+        """
+        alpha = 2.0 / (STATISTICS_SPAN + 1)
+        current: float | None = getattr(self, attribute)
+        if current is None:
+            setattr(self, attribute, sample)
+            return
+        setattr(self, attribute, current + alpha * (sample - current))
 
 
 @dataclass(frozen=True)
@@ -139,15 +167,21 @@ class RouteStatistics:
         samples: How many output lengths the ring is holding right now.
         observations: How many settlements this route has ever reported.
         quantile: What this route is currently reserving at.
-        overrun_ratio: The share of settlements that used more than was
+        overrun_ratio: The share of recent settlements that used more than was
             reserved. Compare it with one minus the quantile: reserving at the
             ninth decile promises roughly one in ten, and a number far above
             that means the history no longer describes the traffic.
-        error_ratio: Reserved divided by actual, averaged over the settlements
-            where anything was generated at all. Around 1.1 for a ninth decile
-            reservation is healthy. Around 5 means the reservation is nowhere
-            near the traffic and most of the headroom is being wasted, which is
-            worth acting on even though nothing is technically wrong.
+        error_ratio: Reserved divided by actual over recent settlements, or
+            None until one of them has generated anything. Around 1.1 for a
+            ninth decile reservation is healthy. Around 5 means the reservation
+            is nowhere near the traffic and most of the headroom is being
+            wasted, which is worth acting on even though nothing is technically
+            wrong.
+
+    Both ratios describe recent traffic rather than everything a route has ever
+    seen. A route carries its own opening requests in a lifetime average for
+    thousands of settlements afterwards, and would report a perfectly calibrated
+    estimator as wasteful long after it had stopped being either.
 
     Example:
         >>> RouteStatistics(
@@ -359,10 +393,8 @@ class QuantileEstimator:
             samples=len(route.ring),
             observations=route.observations,
             quantile=route.quantile,
-            overrun_ratio=route.overruns / route.observations if route.observations else 0.0,
-            error_ratio=(
-                route.error_ratio_sum / route.error_ratio_count if route.error_ratio_count else None
-            ),
+            overrun_ratio=route.overrun_ratio,
+            error_ratio=route.error_ratio,
         )
 
     def record(self, observation: Observation) -> None:
@@ -372,15 +404,16 @@ class QuantileEstimator:
         reserved = observation.reserved.output_tokens
         route.ring.append(actual)
         route.observations += 1
-        if actual > reserved:
+        overran = actual > reserved
+        if overran:
             route.overruns += 1
             route.overruns_since_adapt += 1
+        route.weigh_in("overrun_ratio", 1.0 if overran else 0.0)
         if actual > 0:
             # Skipped rather than recorded when nothing was generated. Reserved
-            # over zero is undefined, and calling it infinite would poison the
-            # average with a number that means nothing.
-            route.error_ratio_sum += reserved / actual
-            route.error_ratio_count += 1
+            # over zero is undefined, and calling it infinite would poison every
+            # later reading with a number that means nothing.
+            route.weigh_in("error_ratio", reserved / actual)
         if self._adapt_quantile:
             self._maybe_adapt(route)
 

@@ -58,8 +58,12 @@ version is below 0.1, any release may change anything.
   being confidently wrong is worse there than being safe and expensive. The fallback is any
   estimator, so "until you know better, reserve five hundred" is one argument.
 - Per route statistics on the quantile estimator: how many observations it has, what it is
-  reserving at, the share of settlements that overran, and reserved divided by actual averaged
-  over the ones that generated anything. The two ratios answer different questions and neither
+  reserving at, the share of recent settlements that overran, and reserved divided by actual over
+  recent settlements. Both ratios describe recent traffic rather than everything a route has ever
+  seen. A route spends its opening requests reserving the maximum because it has no history to
+  read yet, and a lifetime average would carry that period for thousands of settlements
+  afterwards, reporting a perfectly calibrated estimator as wasting several times the headroom it
+  needs. The two ratios answer different questions and neither
   replaces the other. The overrun ratio says whether the quantile is still telling the truth. The
   error ratio says whether it is worth what it costs, and an error ratio near five is a caller
   wasting most of their headroom even though nothing is technically wrong. The error ratio is
