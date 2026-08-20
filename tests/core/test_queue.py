@@ -1,0 +1,143 @@
+"""The waiting queue: who is in it, and who goes next."""
+
+import asyncio
+
+import pytest
+
+from spillway.core.cost import Cost
+from spillway.core.errors import AdmissionDenied
+from spillway.core.queue import Waiter, WaitQueue
+from spillway.core.scope import Scope
+
+
+def waiting(priority=0, deadline_ms=None):
+    return Waiter(
+        claims=(),
+        dimension_of_key={},
+        scope=Scope("tenant:acme"),
+        priority=priority,
+        reserved=Cost(),
+        deadline_ms=deadline_ms,
+        queued_at_ms=0.0,
+        future=asyncio.get_event_loop().create_future(),
+        refusal=AdmissionDenied("no room"),
+    )
+
+
+@pytest.fixture
+def queue():
+    return WaitQueue()
+
+
+async def test_an_empty_queue_has_nobody_to_select(queue):
+    assert queue.depth == 0
+    assert queue.select() is None
+    assert queue.depths() == {}
+
+
+async def test_the_highest_band_is_served_first(queue):
+    low, high = waiting(priority=0), waiting(priority=100)
+    queue.push(low)
+    queue.push(high)
+    assert queue.select() is high
+
+
+async def test_arrival_order_is_kept_within_a_band(queue):
+    first, second = waiting(), waiting()
+    queue.push(first)
+    queue.push(second)
+    assert queue.select() is first
+    queue.remove(first)
+    assert queue.select() is second
+
+
+async def test_a_negative_band_is_still_ordered_below_a_zero_one(queue):
+    # Priority is any integer, not a closed set, so the bands are the values
+    # themselves and a negative one has to sort where its number says.
+    batch, normal = waiting(priority=-100), waiting(priority=0)
+    queue.push(batch)
+    queue.push(normal)
+    assert queue.select() is normal
+
+
+async def test_removing_a_waiter_that_is_not_there_does_nothing(queue):
+    # Both sides remove, and neither can tell whether the other got there
+    # first, so a second removal has to be harmless.
+    waiter = waiting()
+    queue.push(waiter)
+    queue.remove(waiter)
+    queue.remove(waiter)
+    assert queue.depth == 0
+
+
+async def test_two_identical_waiters_are_still_two_waiters(queue):
+    # Compared by value they would be equal, and removing one would take the
+    # other out of the queue with it.
+    first, second = waiting(), waiting()
+    queue.push(first)
+    queue.push(second)
+    queue.remove(first)
+    assert queue.depth == 1
+    assert queue.select() is second
+
+
+async def test_depths_are_reported_per_band(queue):
+    queue.push(waiting(priority=100))
+    queue.push(waiting(priority=0))
+    queue.push(waiting(priority=0))
+    assert queue.depths() == {100: 1, 0: 2}
+    assert queue.depth == 3
+
+
+async def test_a_band_disappears_once_it_empties(queue):
+    waiter = waiting(priority=100)
+    queue.push(waiter)
+    queue.remove(waiter)
+    assert queue.depths() == {}
+
+
+async def test_arrival_position_counts_who_was_already_ahead(queue):
+    first, second, other_band = waiting(), waiting(), waiting(priority=100)
+    queue.push(first)
+    queue.push(second)
+    queue.push(other_band)
+    assert (first.position, second.position, other_band.position) == (0, 1, 0)
+
+
+async def test_expiring_returns_only_the_waiters_whose_time_has_passed(queue):
+    due, later, forever = (
+        waiting(deadline_ms=100.0),
+        waiting(deadline_ms=500.0),
+        waiting(deadline_ms=None),
+    )
+    for waiter in (due, later, forever):
+        queue.push(waiter)
+    assert queue.expire(100.0) == [due]
+    assert queue.depth == 2
+
+
+async def test_expiring_reaches_every_band_not_just_the_one_being_served(queue):
+    # A waiter behind a head that cannot be admitted is still owed its own
+    # deadline. Checking only the selected waiter is what makes it wait for
+    # ever instead.
+    blocked_head = waiting(priority=100, deadline_ms=None)
+    behind = waiting(priority=0, deadline_ms=100.0)
+    queue.push(blocked_head)
+    queue.push(behind)
+    assert queue.expire(200.0) == [behind]
+    assert queue.select() is blocked_head
+
+
+async def test_the_earliest_deadline_is_the_one_to_wake_for(queue):
+    assert queue.earliest_deadline_ms() is None
+    queue.push(waiting(deadline_ms=None))
+    assert queue.earliest_deadline_ms() is None
+    queue.push(waiting(priority=100, deadline_ms=900.0))
+    queue.push(waiting(deadline_ms=300.0))
+    assert queue.earliest_deadline_ms() == 300.0
+
+
+async def test_the_repr_shows_the_bands_highest_first(queue):
+    queue.push(waiting(priority=0))
+    queue.push(waiting(priority=100))
+    assert repr(queue) == "WaitQueue({100: 1, 0: 1})"

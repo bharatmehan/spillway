@@ -18,6 +18,9 @@ version is below 0.1, any release may change anything.
 - A guard against a request that is larger than a limit it draws on. No amount of waiting makes
   it fit, so it is refused at once with the two numbers and the three ways to fix it, rather than
   waiting for a capacity that can never arrive.
+- A waiting queue, ordered strictly by priority band and first in first out within a band. It
+  reports the depth of each band, hands back whoever is next, and gives up on a waiter whose
+  deadline has passed wherever in the queue that waiter is sitting.
 
 ## 0.0.2 (2026-08-18)
 
