@@ -13,6 +13,8 @@ version is below 0.1, any release may change anything.
 - Sleeping on the fake clock. A sleeper is released when the clock is advanced past its wake
   time, so a test can run ten minutes of waiting in a millisecond and get the same sequence of
   events every run.
+- `admit()` refuses a timeout and a deadline given together. They say the same thing two ways and
+  there is no honest answer when they disagree.
 
 ## 0.0.2 (2026-08-18)
 

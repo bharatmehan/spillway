@@ -4,7 +4,7 @@ import pytest
 
 from spillway.core.clock import FakeClock
 from spillway.core.cost import Cost, Distribution, Estimate
-from spillway.core.errors import AdmissionDenied
+from spillway.core.errors import AdmissionDenied, ConfigurationError
 from spillway.core.lease import LeaseState
 from spillway.core.scope import Priority, Scope
 from spillway.core.spillway import RESERVATION_QUANTILE, Spillway
@@ -193,3 +193,17 @@ def test_a_limiter_prints_what_it_enforces(limiter):
 
 def test_the_dimensions_are_readable(limiter):
     assert [dimension.name for dimension in limiter.dimensions] == ["output_tpm", "generations"]
+
+
+def test_a_timeout_and_a_deadline_together_are_a_configuration_error():
+    # They say the same thing two ways, and picking one silently would make a
+    # caller believe a limit they never set.
+    limiter = Spillway()
+    with pytest.raises(ConfigurationError, match="not both"):
+        limiter.admit(timeout=5.0, deadline=1_000.0)
+
+
+def test_either_a_timeout_or_a_deadline_alone_is_accepted():
+    limiter = Spillway()
+    assert limiter.admit(timeout=5.0) is not None
+    assert limiter.admit(deadline=1_000.0) is not None

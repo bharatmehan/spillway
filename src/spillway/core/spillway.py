@@ -13,7 +13,7 @@ from types import TracebackType
 
 from spillway.core.clock import Clock, MonotonicClock
 from spillway.core.cost import Cost, Estimate, default_estimate
-from spillway.core.errors import AdmissionDenied, LeaseExpired
+from spillway.core.errors import AdmissionDenied, ConfigurationError, LeaseExpired
 from spillway.core.lease import Lease, LeaseState
 from spillway.core.scope import Priority, Scope
 from spillway.dimensions.base import Dimension, claim_key
@@ -150,17 +150,31 @@ class Spillway:
             prompt: Used to count input tokens when no estimate is given.
             max_tokens: The requested output limit.
             model: Recorded on the estimate when known.
-            timeout: Reserved for waiting, which does not exist yet.
-            deadline: Reserved for waiting, which does not exist yet.
+            timeout: How many seconds to wait for capacity. Mutually
+                exclusive with `deadline`.
+            deadline: A fixed point to give up at, in seconds on the same
+                monotonic scale the standard library reports. Mutually
+                exclusive with `timeout`.
             weight: Reserved for fair sharing, which does not exist yet.
 
         Returns:
             A context that reserves capacity when entered or acquired.
 
-        The last three arguments are accepted and unused. They are in the
-        signature now so that the shape a caller writes against, and the shape
-        an editor shows them, does not change when they start working.
+        Raises:
+            ConfigurationError: if both `timeout` and `deadline` are given.
+
+        The last argument is accepted and unused. It is in the signature now so
+        that the shape a caller writes against, and the shape an editor shows
+        them, does not change when it starts working.
         """
+        if timeout is not None and deadline is not None:
+            message = (
+                f"admit() takes a timeout or a deadline, not both, and got "
+                f"timeout={timeout} and deadline={deadline}. They say the same thing two "
+                f"ways and there is no honest answer when they disagree. Keep the one you "
+                f"mean: timeout for seconds from now, deadline for a fixed point to stop at."
+            )
+            raise ConfigurationError(message)
         return AdmitContext(
             limiter=self,
             scope=Scope.of(scope if scope is not None else self._default_scope),
