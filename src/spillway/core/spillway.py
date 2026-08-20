@@ -215,38 +215,68 @@ class Spillway:
             },
         )
 
-    async def _acquire(
+    def _claims_for(
         self,
         *,
         scope: Scope,
         priority: int,
         reserved: Cost,
-    ) -> Lease:
-        """Reserve `reserved` across every dimension, or refuse.
+    ) -> tuple[tuple[Claim, ...], Mapping[str, str]]:
+        """Work out what one admission has to take, and from which key.
+
+        Built once and reused for every attempt, because a request that is
+        retried after waiting asks for exactly what it asked for the first time.
+
+        Returns:
+            The claims, and the dimension name each claim's key belongs to,
+            which is what turns a store level key back into something worth
+            showing a caller.
 
         Raises:
-            AdmissionDenied: if any dimension has no room, or if the request is
-                larger than a limit and so could never have room.
+            AdmissionDenied: if the request is larger than a limit and so could
+                never have room, however long it waited.
         """
         claims: list[Claim] = []
         dimension_of_key: dict[str, str] = {}
         for dimension in self._dimensions:
             claim = dimension.claim(reserved, scope)
-            if claim is not None:
-                if claim.cost > claim.limit:
-                    raise AdmissionDenied(
-                        _impossible_message(dimension.name, claim.cost, claim.limit),
+            if claim is None:
+                continue
+            if claim.cost > claim.limit:
+                raise AdmissionDenied(
+                    _impossible_message(dimension.name, claim.cost, claim.limit),
+                    binding_dimension=dimension.name,
+                    explanation=AdmissionExplanation(
+                        admitted=False,
+                        scope=scope.key,
+                        priority=priority,
                         binding_dimension=dimension.name,
-                        explanation=AdmissionExplanation(
-                            admitted=False,
-                            scope=scope.key,
-                            priority=priority,
-                            binding_dimension=dimension.name,
-                        ),
-                    )
-                claims.append(claim)
-                dimension_of_key[claim.key] = dimension.name
+                    ),
+                )
+            claims.append(claim)
+            dimension_of_key[claim.key] = dimension.name
+        return tuple(claims), dimension_of_key
 
+    async def _attempt(
+        self,
+        *,
+        claims: Sequence[Claim],
+        dimension_of_key: Mapping[str, str],
+        scope: Scope,
+        priority: int,
+        reserved: Cost,
+    ) -> Lease:
+        """Ask the store for the whole batch once, and report what happened.
+
+        One attempt, no waiting. Both the direct path and the dispatcher go
+        through here, so a request that waited is admitted by exactly the same
+        code as one that did not.
+
+        Raises:
+            AdmissionDenied: if any dimension has no room. It carries the
+                binding dimension and how long until it would fit, which is
+                what a waiter is scheduled on.
+        """
         result = await self._store.reserve(
             claims,
             ttl_ms=DEFAULT_LEASE_TTL_MS,
@@ -287,6 +317,32 @@ class Spillway:
             dimensions=self._dimensions,
             store=self._store,
             explanation=explanation,
+        )
+
+    async def _acquire(
+        self,
+        *,
+        scope: Scope,
+        priority: int,
+        reserved: Cost,
+    ) -> Lease:
+        """Reserve `reserved` across every dimension, or refuse.
+
+        Raises:
+            AdmissionDenied: if any dimension has no room, or if the request is
+                larger than a limit and so could never have room.
+        """
+        claims, dimension_of_key = self._claims_for(
+            scope=scope,
+            priority=priority,
+            reserved=reserved,
+        )
+        return await self._attempt(
+            claims=claims,
+            dimension_of_key=dimension_of_key,
+            scope=scope,
+            priority=priority,
+            reserved=reserved,
         )
 
 
