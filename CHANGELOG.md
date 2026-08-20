@@ -43,6 +43,15 @@ version is below 0.1, any release may change anything.
   what an estimator needs to correct itself. Reported before the store is asked, so a request that
   outran its reservation still teaches: the bookkeeping failed, the request still generated what
   it generated. An abandoned request teaches nothing, because it produced nothing.
+- `QuantileEstimator`, which predicts output length from what a route has actually produced. Keep
+  the recent output lengths per route, reserve the point most of them came in under, settle the
+  truth and hand the difference back at once. It makes no claim to accuracy and none should ever
+  be made for it: the claim is that being wrong costs a little wasted headroom for the length of
+  one request rather than an overrun that breaks a limit. The leverage is the route key rather
+  than anything clever inside, and the default key, the model alone, is weak on purpose.
+- The history per route is a bounded ring of recent output lengths, a thousand by default. Bounded
+  because memory has to be, and recent because these distributions drift: a history that never
+  forgot would answer today's question with last quarter's traffic.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
