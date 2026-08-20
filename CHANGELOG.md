@@ -3,7 +3,7 @@
 Notable changes to this project, newest first. This project uses semantic versioning. While the
 version is below 0.1, any release may change anything.
 
-## Unreleased
+## 0.0.3 (2026-08-20)
 
 ### Added
 
