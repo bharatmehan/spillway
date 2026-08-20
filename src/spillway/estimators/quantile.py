@@ -19,11 +19,17 @@ amount of arithmetic over a group that mixes classification with report writing.
 
 from __future__ import annotations
 
+import math
 from collections import deque
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 
-from spillway.core.cost import RESERVATION_QUANTILE, Distribution, Estimate, count_input
+from spillway.core.cost import (
+    RESERVATION_QUANTILE,
+    Distribution,
+    Estimate,
+    count_input,
+)
 from spillway.core.errors import ConfigurationError
 from spillway.estimators.base import Estimator, Observation, RequestContext
 from spillway.estimators.max_tokens import MaxTokensEstimator
@@ -62,6 +68,19 @@ def _by_model(context: RequestContext) -> Hashable:
     same machinery does considerably better.
     """
     return context.model
+
+
+def _thinned(samples: Sequence[int], keep: int) -> list[int]:
+    """Reduce `samples` to at most `keep`, spread evenly across the whole.
+
+    An even stride rather than a head or a tail, because the input is one
+    history followed by another and taking either end would discard one side
+    entirely.
+    """
+    if len(samples) <= keep:
+        return list(samples)
+    stride = math.ceil(len(samples) / keep)
+    return list(samples[::stride])[:keep]
 
 
 @dataclass
@@ -283,6 +302,56 @@ class QuantileEstimator:
             # average with a number that means nothing.
             route.error_ratio_sum += reserved / actual
             route.error_ratio_count += 1
+
+    def serialise(self) -> dict[Hashable, tuple[int, ...]]:
+        """Hand back every route's history, as plain containers.
+
+        Nothing calls this yet. It exists now so that sharing histories between
+        workers, and keeping them across a restart, is a wiring change later
+        rather than a redesign of everything above.
+
+        Plain Python containers rather than an encoded form: whatever ends up
+        storing these will have its own opinion about encoding, and choosing
+        one here would be choosing it blind.
+
+        Example:
+            >>> from spillway.core.cost import Cost
+            >>> estimator = QuantileEstimator(min_samples=1)
+            >>> context = RequestContext(model="claude")
+            >>> estimator.record(
+            ...     Observation(
+            ...         context=context,
+            ...         reserved=Cost(output_tokens=400),
+            ...         actual=Cost(output_tokens=310),
+            ...         at_ms=0.0,
+            ...     )
+            ... )
+            >>> estimator.serialise()
+            {'claude': (310,)}
+        """
+        return {key: tuple(route.ring) for key, route in self._routes.items()}
+
+    def merge(self, histories: Mapping[Hashable, Sequence[int]]) -> None:
+        """Fold another instance's histories into this one.
+
+        Concatenates and then resamples, keeping an even stride across the
+        combined history when it is longer than the ring. Appending the
+        incoming samples straight onto the ring would evict the entire local
+        history whenever both sides are full, which is precisely the case that
+        matters, and would make a merge a replacement.
+
+        The result is a mixture of both sides rather than either one, which is
+        the point: two workers that have each seen half the traffic should end
+        up agreeing about all of it.
+        """
+        for key, incoming in histories.items():
+            route = self._routes.get(key)
+            if route is None:
+                route = _Route(ring=deque(maxlen=self._history), quantile=self._quantile)
+                self._routes[key] = route
+            combined = [*route.ring, *incoming]
+            route.ring.clear()
+            route.ring.extend(_thinned(combined, self._history))
 
     def _route_for(self, context: RequestContext) -> _Route:
         """The state for `context`'s route, created on first sight."""

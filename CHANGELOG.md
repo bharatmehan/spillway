@@ -64,6 +64,11 @@ version is below 0.1, any release may change anything.
   error ratio says whether it is worth what it costs, and an error ratio near five is a caller
   wasting most of their headroom even though nothing is technically wrong. The error ratio is
   reported as absent rather than infinite when a request generated no output at all.
+- Serialising and merging a quantile estimator's histories. Nothing calls them yet. They exist so
+  that sharing what has been learned between workers, and keeping it across a restart, is a wiring
+  change later rather than a redesign. A merge concatenates and then thins evenly, so two workers
+  that have each seen half the traffic end up agreeing about all of it rather than one replacing
+  the other.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing

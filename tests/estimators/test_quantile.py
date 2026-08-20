@@ -266,3 +266,70 @@ def test_the_statistics_report_the_route_s_own_quantile():
     context = RequestContext(model="claude")
     teach(estimator, context, [10])
     assert estimator.statistics(context).quantile == 0.75
+
+
+def test_serialising_hands_back_every_route_s_history():
+    estimator = QuantileEstimator(route_key=lambda ctx: ctx.tags.get("task"), min_samples=1)
+    teach(estimator, RequestContext(tags={"task": "a"}), [10, 20])
+    teach(estimator, RequestContext(tags={"task": "b"}), [30])
+    assert estimator.serialise() == {"a": (10, 20), "b": (30,)}
+
+
+def test_serialise_and_merge_round_trip():
+    source = QuantileEstimator(min_samples=1)
+    context = RequestContext(model="claude")
+    teach(source, context, [10, 20, 30])
+    target = QuantileEstimator(min_samples=1)
+    target.merge(source.serialise())
+    assert target.serialise() == source.serialise()
+
+
+def test_merging_into_a_route_that_already_has_history_keeps_both():
+    mine = QuantileEstimator(min_samples=1)
+    context = RequestContext(model="claude")
+    teach(mine, context, [10, 20])
+    mine.merge({"claude": (30, 40)})
+    assert sorted(mine.serialise()["claude"]) == [10, 20, 30, 40]
+
+
+def test_merging_two_full_rings_produces_a_mixture_of_both():
+    # Appending straight onto the ring would evict the whole local history
+    # whenever both sides are full, which is exactly the case that matters, and
+    # would make a merge a replacement.
+    mine = QuantileEstimator(min_samples=1, history=10)
+    context = RequestContext(model="claude")
+    teach(mine, context, [100] * 10)
+    mine.merge({"claude": (900,) * 10})
+    kept = mine.serialise()["claude"]
+    assert len(kept) == 10
+    assert 100 in kept
+    assert 900 in kept
+
+
+def test_merging_leaves_the_prediction_between_the_two():
+    mine = QuantileEstimator(min_samples=1, history=10)
+    context = RequestContext(model="claude")
+    teach(mine, context, [100] * 10)
+    mine.merge({"claude": (900,) * 10})
+    assert 100 < reserved_by(mine, context) <= 900
+
+
+def test_merging_a_route_nobody_has_seen_creates_it():
+    estimator = QuantileEstimator(min_samples=1)
+    estimator.merge({"claude": (300, 320, 340)})
+    assert estimator.samples(RequestContext(model="claude")) == 3
+
+
+def test_merging_never_grows_a_ring_past_its_bound():
+    estimator = QuantileEstimator(min_samples=1, history=5)
+    estimator.merge({"claude": tuple(range(1_000))})
+    assert estimator.samples(RequestContext(model="claude")) == 5
+
+
+def test_merging_nothing_changes_nothing():
+    estimator = QuantileEstimator(min_samples=1)
+    context = RequestContext(model="claude")
+    teach(estimator, context, [10, 20, 30])
+    before = estimator.serialise()
+    estimator.merge({})
+    assert estimator.serialise() == before
