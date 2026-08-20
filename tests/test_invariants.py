@@ -1,4 +1,4 @@
-"""The six properties that must hold for every possible sequence of events.
+"""The properties that must hold for every possible sequence of events.
 
 Several of the mechanisms these cover look like unnecessary complication when
 read in isolation: the dry run pass before applying a batch, the clamp on a
@@ -8,7 +8,9 @@ that someone tidying up later can see what breaks if it goes.
 
 import asyncio
 import contextlib
+import math
 import threading
+from fractions import Fraction
 
 import pytest
 from hypothesis import given
@@ -369,3 +371,63 @@ def test_inv_8_every_waiter_is_queued_or_finished(operations):
         assert queue.depth == sum(1 for task in waiting if not task.done())
 
     asyncio.run(_drive(operations, check))
+
+
+SAMPLES = st.lists(st.integers(min_value=0, max_value=100_000), min_size=1, max_size=200)
+QUANTILES = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
+
+
+def _exact_quantile(samples, q):
+    """The interpolated quantile with no floating point error at all.
+
+    Computed with fractions so that the test is checking the implementation
+    rather than reproducing its arithmetic, including the arithmetic that
+    needed a tolerance in the first place.
+    """
+    ordered = sorted(samples)
+    position = Fraction(q) * (len(ordered) - 1)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return Fraction(ordered[lower])
+    below, above = ordered[lower], ordered[upper]
+    return below + (above - below) * (position - lower)
+
+
+# INV-9. A reservation at quantile q covers at least the q share of the history.
+#
+# This is the promise the whole estimator rests on, and it is a promise about
+# an interpolation and a rounding, both of which are easy to get wrong in the
+# direction that quietly under-reserves. Reserving at the ninth decile has to
+# actually cover roughly nine in ten of the observations it was computed from,
+# or every claim made about the overrun rate is false and the adaptive loop is
+# correcting against a number that was never true.
+@given(samples=SAMPLES, q=QUANTILES)
+def test_inv_9_a_quantile_covers_its_share_of_the_samples(samples, q):
+    reserved = Distribution.empirical(samples).quantile(q)
+    covered = sum(1 for sample in samples if sample <= reserved)
+    lower_index = math.floor(q * (len(samples) - 1))
+    assert covered >= lower_index + 1
+
+
+@given(samples=SAMPLES, q=QUANTILES)
+def test_inv_9_a_quantile_is_never_below_the_point_it_was_asked_for(samples, q):
+    # The half of INV-9 that the coverage count cannot see. Rounding an
+    # interpolation down still covers the sample below it, so a limiter that
+    # rounded the wrong way would satisfy the count above while reserving less
+    # than the quantile every time one lands between two samples, which is most
+    # of the time. The slack below is the documented snap: an interpolation
+    # within a hair of a whole token is that token, not the one above it.
+    reserved = Distribution.empirical(samples).quantile(q)
+    exact = _exact_quantile(samples, q)
+    assert reserved >= exact - Fraction(1, 1_000_000)
+    assert reserved < exact + 1
+
+
+@given(samples=SAMPLES, q=QUANTILES)
+def test_inv_9_a_quantile_never_leaves_the_range_of_the_samples(samples, q):
+    # Interpolation is between two observed values, so the answer cannot be
+    # outside them. A reservation above the largest thing ever seen would be
+    # waste invented from nothing.
+    reserved = Distribution.empirical(samples).quantile(q)
+    assert min(samples) <= reserved <= max(samples)

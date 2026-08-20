@@ -82,6 +82,11 @@ version is below 0.1, any release may change anything.
   `from spillway import QuantileEstimator` works. The estimator protocol and the observation do
   not: a protocol needs no import to implement, and exporting one only enlarges what is promised
   for ever.
+- A property covering the reservation quantile itself. Over generated histories and generated
+  quantiles, the reserved amount covers at least its share of the observations, never falls below
+  the point it was asked for, and never leaves the range of what was actually seen. This is the
+  promise everything else rests on, and it is a promise about an interpolation and a rounding,
+  both easy to get wrong in the direction that quietly under-reserves.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
