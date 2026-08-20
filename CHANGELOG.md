@@ -57,6 +57,10 @@ version is below 0.1, any release may change anything.
 - Real wait times and queue positions on the lease and its explanation. The question "why was this
   request three seconds slow" is now answered by a value already in hand, naming the dimension that
   bound, how full it was, and how many requests were ahead in the queue.
+- A property covering the wakeups themselves. Over generated sequences of arrivals, settlements
+  and clock advances, every waiter that could be admitted is admitted once nothing more arrives.
+  This is the class of bug that otherwise appears in production as an intermittent hang nobody can
+  reproduce.
 
 ### Changed
 

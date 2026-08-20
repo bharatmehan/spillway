@@ -7,6 +7,7 @@ that someone tidying up later can see what breaks if it goes.
 """
 
 import asyncio
+import contextlib
 import threading
 
 import pytest
@@ -15,7 +16,9 @@ from hypothesis import strategies as st
 
 from spillway.core.clock import FakeClock
 from spillway.core.cost import Distribution, Estimate
+from spillway.core.errors import LeaseExpired
 from spillway.core.spillway import Spillway
+from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
 from spillway.stores.base import Claim, ClaimKind, Delta
 from spillway.stores.memory import MemoryStore
@@ -253,3 +256,100 @@ def test_inv_6_held_gauge_equals_the_sum_of_outstanding_leases(actions):
 def _run(coroutine):
     """Drive one coroutine to completion, for a property test that is not async."""
     return asyncio.run(coroutine)
+
+
+ARRIVALS = st.sampled_from([100, 0, -50])
+ADVANCES = st.sampled_from([1, 500, 20_000])
+SCENARIOS = st.lists(
+    st.one_of(
+        st.tuples(st.just("arrive"), ARRIVALS),
+        st.tuples(st.just("settle"), st.just(0)),
+        st.tuples(st.just("advance"), ADVANCES),
+    ),
+    min_size=1,
+    max_size=25,
+)
+
+
+async def _quiet(limiter, waiting):
+    """Yield until nothing has moved for a while.
+
+    One quiet pass is not enough. A settlement travels through the loop in
+    several hops, so a single yield with nothing to show for it means only that
+    the next hop has not run yet.
+    """
+    previous = None
+    still = 0
+    for _ in range(400):
+        current = (limiter._queue.depth, sum(1 for task in waiting if task.done()))
+        still = still + 1 if current == previous else 0
+        if still >= 10:
+            return
+        previous = current
+        await asyncio.sleep(0)
+
+
+def _finish(lease):
+    """Settle a lease, tolerating one that outlived its expiry.
+
+    Advancing a whole window at a time takes leases past the sixty second
+    expiry, and the store has already taken that capacity back. A real call
+    that ran that long lands in exactly the same place.
+    """
+    with contextlib.suppress(LeaseExpired):
+        lease.settle(input=0, output=0)
+
+
+async def _drive(operations, check=None):
+    """Run a generated sequence of arrivals, settlements and clock advances."""
+    clock = FakeClock()
+    limiter = Spillway(
+        dimensions=[Concurrency("slots", limit=2), Rate("rpm", limit=2)],
+        store=MemoryStore(clock=clock),
+        clock=clock,
+        # Nothing may time out. A waiter here is only ever ended by being
+        # admitted, so a wakeup that goes missing shows up as a stuck waiter
+        # rather than being papered over by the deadline.
+        default_timeout=None,
+    )
+    waiting: list[asyncio.Task[None]] = []
+    held: list[object] = []
+
+    async def arrive(priority):
+        held.append(await limiter.admit(priority=priority).acquire())
+
+    for name, argument in operations:
+        if name == "arrive":
+            waiting.append(asyncio.ensure_future(arrive(argument)))
+        elif name == "settle" and held:
+            _finish(held.pop(0))
+        elif name == "advance":
+            clock.advance(argument)
+        await _quiet(limiter, waiting)
+        if check is not None:
+            check(limiter, waiting)
+
+    # Nothing else arrives. Give everything back and let whole windows pass,
+    # which is every source of capacity there is.
+    for _ in range(len(waiting) + 3):
+        while held:
+            _finish(held.pop())
+        await _quiet(limiter, waiting)
+        clock.advance(60_000)
+        await _quiet(limiter, waiting)
+    return waiting
+
+
+# INV-7. No wakeup is ever lost.
+#
+# Capacity appears in two completely different ways, a release and the passage
+# of time, and the dispatcher has to hear about both. Missing either produces a
+# hang that appears only under load and that nobody can reproduce afterwards.
+# Once nothing more arrives and everything has been given back, every waiter
+# that could be admitted has to have been admitted.
+@given(operations=SCENARIOS)
+def test_inv_7_no_wakeup_is_ever_lost(operations):
+    waiting = asyncio.run(_drive(operations))
+    for task in waiting:
+        assert task.done(), "a waiter was never woken"
+        task.result()
