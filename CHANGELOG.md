@@ -28,6 +28,11 @@ version is below 0.1, any release may change anything.
   library does not ship an output length predictor and will not, because that is a research
   artefact with a heavy dependency tree and the quickstart has to run with nothing installed. It
   ships the socket instead, and this is the socket.
+- An `estimator` argument on the limiter. It defaults to reserving the maximum a caller allowed,
+  which is exactly what happened before, so nothing changes for anyone until they pass one.
+  Prediction happens once per request rather than once per attempt: a request that waits reserves
+  what it asked for when it arrived, because a prediction that moved while it queued would mean
+  its place in the queue was earned against a different request.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing

@@ -13,13 +13,15 @@ from dataclasses import dataclass
 from types import TracebackType
 
 from spillway.core.clock import Clock, MonotonicClock
-from spillway.core.cost import Cost, Estimate, default_estimate
+from spillway.core.cost import Cost, Estimate
 from spillway.core.dispatcher import Dispatcher
 from spillway.core.errors import AdmissionDenied, ConfigurationError, LeaseExpired
 from spillway.core.lease import Lease, LeaseState
 from spillway.core.queue import DEFAULT_QUEUE_CAPACITY, QueueFullPolicy, Waiter, WaitQueue
 from spillway.core.scope import Priority, Scope
 from spillway.dimensions.base import Dimension, claim_key
+from spillway.estimators.base import Estimator, RequestContext
+from spillway.estimators.max_tokens import MaxTokensEstimator
 from spillway.observability.explain import AdmissionExplanation
 from spillway.stores.base import Claim, DuplexStore, Utilisation
 from spillway.stores.memory import MemoryStore
@@ -88,6 +90,10 @@ class Spillway:
             which is correct within one process and not across several.
         clock: Where time comes from.
         scope: The scope used when a caller names none.
+        estimator: How to predict what a request will cost. Defaults to
+            reserving the output maximum the caller allowed, which is safe and
+            expensive. An estimator that learns from settled requests reserves
+            far less for the same safety, once it has a history to read.
         default_timeout: How many seconds to wait for capacity when a caller
             names neither a timeout nor a deadline. Zero refuses rather than
             waits. None waits for as long as it takes.
@@ -126,6 +132,7 @@ class Spillway:
         store: DuplexStore | None = None,
         clock: Clock | None = None,
         scope: str | Scope | None = None,
+        estimator: Estimator | None = None,
         default_timeout: float | None = DEFAULT_TIMEOUT_S,
         queue_capacity: int = DEFAULT_QUEUE_CAPACITY,
         queue_full_policy: QueueFullPolicy = "reject",
@@ -149,6 +156,7 @@ class Spillway:
         self._dimensions = tuple(dimensions)
         self._store: DuplexStore = store if store is not None else MemoryStore(clock=self._clock)
         self._default_scope = Scope.of(scope)
+        self._estimator: Estimator = estimator if estimator is not None else MaxTokensEstimator()
         self._queue = WaitQueue(capacity=queue_capacity, policy=queue_full_policy)
         self._dispatcher = Dispatcher(limiter=self, queue=self._queue, clock=self._clock)
 
@@ -570,15 +578,26 @@ class AdmitContext:
             deadline=self._deadline,
         )
 
+    def _context(self) -> RequestContext:
+        """What the estimator is told about this request."""
+        return RequestContext(
+            prompt=self._prompt,
+            max_tokens=self._max_tokens,
+            model=self._model,
+            scope=self._scope,
+        )
+
     def _reserved(self) -> Cost:
-        """Work out what to reserve, from the estimate or from the prompt."""
+        """Work out what to reserve, from the caller's estimate or the limiter's.
+
+        Once per acquisition, never once per dispatch attempt. A request that
+        waited reserves what it asked for when it arrived, because a prediction
+        that moved while it queued would mean its place in the queue was earned
+        against a different request.
+        """
         estimate = self._estimate
         if estimate is None:
-            estimate = default_estimate(
-                self._prompt,
-                max_tokens=self._max_tokens,
-                model=self._model,
-            )
+            estimate = self._limiter._estimator.estimate(self._context())
         return Cost(
             input_tokens=estimate.input,
             output_tokens=estimate.output.quantile(estimate.quantile),
