@@ -3,6 +3,14 @@
 Notable changes to this project, newest first. This project uses semantic versioning. While the
 version is below 0.1, any release may change anything.
 
+## Unreleased
+
+### Added
+
+- An empirical distribution over the output lengths a route has actually produced. This is what
+  makes reserving less than the worst case possible: with a history to read, the ninth decile of
+  what really happened is a far smaller number than the maximum a caller was willing to allow.
+
 ## 0.0.3 (2026-08-20)
 
 ### Added

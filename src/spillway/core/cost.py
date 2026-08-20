@@ -9,7 +9,7 @@ number loses exactly the information admission control needs.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -103,10 +103,10 @@ class Cost:
         )
 
 
-DistributionKind = Literal["point", "bounded"]
+DistributionKind = Literal["point", "bounded", "empirical"]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Distribution:
     """A prediction of how many output tokens a request will produce.
 
@@ -116,10 +116,11 @@ class Distribution:
     conservatively affordable: the surplus is credited back the moment the real
     figure is known.
 
-    Construct one through `point` or `bounded_by` rather than directly. Both
-    currently answer every quantile with the same number, and they are separate
-    kinds because they mean different things to a reader and because later
-    stages treat a bound as a fallback rather than a belief.
+    Construct one through `point`, `bounded_by` or `empirical` rather than
+    directly. The first two answer every quantile with the same number and are
+    separate kinds because they mean different things to a reader: a point is a
+    belief and a bound is a fallback. The third answers from what a route has
+    actually produced.
 
     Example:
         >>> known = Distribution.point(300)
@@ -127,16 +128,46 @@ class Distribution:
         (300, 300)
         >>> Distribution.bounded_by(4096).quantile(0.9)
         4096
+
+        An empirical distribution is where reserving less than the worst case
+        becomes possible. Four of these five requests came in under 400 tokens.
+
+        >>> observed = Distribution.empirical([340, 120, 4_100, 300, 380])
+        >>> observed.quantile(0.5), observed.quantile(0.9)
+        (340, 2612)
     """
 
     kind: DistributionKind
     value: int
+    samples: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
-        """Reject a negative token count, which no provider can produce."""
+        """Reject a token count no provider could produce, and an empty history."""
         if self.value < 0:
             message = f"An output token count cannot be negative, got {self.value}."
             raise ValueError(message)
+        if self.kind == "empirical" and not self.samples:
+            message = (
+                "An empirical distribution needs at least one observed sample. With no "
+                "history there is nothing to predict from, so use Distribution.bounded_by "
+                "with the requested maximum instead."
+            )
+            raise ValueError(message)
+        if self.samples and min(self.samples) < 0:
+            message = f"An observed output length cannot be negative, got {min(self.samples)}."
+            raise ValueError(message)
+
+    def __repr__(self) -> str:
+        """Show the kind and the number, never a thousand samples.
+
+        Hand written because the generated one prints every field, and a
+        history of a thousand observations is not something anyone reads.
+        """
+        if self.kind == "empirical":
+            return (
+                f"Distribution(kind='empirical', value={self.value}, samples={len(self.samples)})"
+            )
+        return f"Distribution(kind={self.kind!r}, value={self.value})"
 
     @classmethod
     def point(cls, value: int) -> Distribution:
@@ -159,8 +190,34 @@ class Distribution:
         """
         return cls(kind="bounded", value=max_tokens)
 
+    @classmethod
+    def empirical(cls, samples: Iterable[int]) -> Distribution:
+        """Predict from `samples`, the output lengths a route has produced.
+
+        Sorted once here rather than on every quantile call, because a
+        distribution is built in order to be asked, and asking it for two
+        different quantiles should not sort the same samples twice.
+
+        Args:
+            samples: Observed output lengths, in any order.
+
+        Raises:
+            ValueError: if `samples` is empty, or if any sample is negative.
+        """
+        ordered = tuple(sorted(samples))
+        return cls(
+            kind="empirical",
+            value=ordered[-1] if ordered else 0,
+            samples=ordered,
+        )
+
     def quantile(self, q: float) -> int:
         """Return the output length at quantile `q`, where `q` is in [0, 1].
+
+        An empirical distribution interpolates linearly between the two samples
+        `q` falls between, then rounds up. Rounding up because a reservation is
+        a whole number of tokens, and rounding down would under-reserve by
+        construction on every quantile that lands between two samples.
 
         Raises:
             ValueError: if `q` is outside [0, 1].
@@ -168,7 +225,23 @@ class Distribution:
         if not 0.0 <= q <= 1.0:
             message = f"A quantile must be between 0 and 1 inclusive, got {q}."
             raise ValueError(message)
-        return self.value
+        if self.kind != "empirical":
+            return self.value
+        position = q * (len(self.samples) - 1)
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        if lower == upper:
+            return self.samples[lower]
+        below, above = self.samples[lower], self.samples[upper]
+        interpolated = below + (above - below) * (position - lower)
+        # Snapped to a whole number before rounding up, because `position` is a
+        # product of floats: 0.9 * 4 is 3.6000000000000005, so an interpolation
+        # that lands exactly on a token count would otherwise reserve one more
+        # than it asked for, on nothing but arithmetic noise.
+        whole = round(interpolated)
+        if math.isclose(interpolated, whole, rel_tol=1e-9):
+            return whole
+        return math.ceil(interpolated)
 
 
 @dataclass(frozen=True)
