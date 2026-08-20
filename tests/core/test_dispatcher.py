@@ -15,6 +15,7 @@ from spillway.core.scope import Scope
 from spillway.core.spillway import Spillway
 from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
+from spillway.stores.base import ReserveResult
 from spillway.stores.memory import MemoryStore
 
 ACME = Scope("tenant:acme")
@@ -105,7 +106,9 @@ async def test_a_waiter_is_served_when_capacity_is_released(clock):
 async def test_a_release_during_a_reservation_attempt_is_not_lost(clock):
     # The whole reason the event is cleared before the attempt rather than
     # after it. Cleared afterwards, this release is wiped and the waiter sleeps
-    # through capacity that is sitting there free.
+    # through capacity that is sitting there free. The first attempt refuses
+    # whatever the state, so the only way through is the release that landed
+    # while it was in flight.
     class Gated:
         def __init__(self, inner, gate):
             self._inner, self._gate, self._opened = inner, gate, False
@@ -114,6 +117,7 @@ async def test_a_release_during_a_reservation_attempt_is_not_lost(clock):
             if not self._opened:
                 self._opened = True
                 await self._gate.wait()
+                return ReserveResult.refused(claims[0].key, retry_after_ms=None)
             return self._inner.reserve_sync(claims, **arguments)
 
         async def settle(self, lease_id, deltas):
