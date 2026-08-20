@@ -17,11 +17,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from spillway.core.clock import FakeClock
-from spillway.core.cost import Distribution, Estimate
+from spillway.core.cost import Cost, Distribution, Estimate
 from spillway.core.errors import LeaseExpired
 from spillway.core.spillway import Spillway
 from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
+from spillway.estimators.base import Observation, RequestContext
+from spillway.estimators.quantile import DEFAULT_QUANTILE_BOUNDS, QuantileEstimator
 from spillway.stores.base import Claim, ClaimKind, Delta
 from spillway.stores.memory import MemoryStore
 
@@ -431,3 +433,43 @@ def test_inv_9_a_quantile_never_leaves_the_range_of_the_samples(samples, q):
     # waste invented from nothing.
     reserved = Distribution.empirical(samples).quantile(q)
     assert min(samples) <= reserved <= max(samples)
+
+
+# INV-10. The estimator's bookkeeping stays well formed, whatever it is told.
+#
+# The ring is bounded, so the sample count can never exceed it however much
+# traffic arrives, and can never fall below zero. The overrun ratio is a share
+# and lives in [0, 1]. The error ratio is never negative, and is absent rather
+# than infinite when a request generated nothing at all: reserved over zero has
+# no value, and letting an infinity into the average would poison every number
+# a user reads afterwards, including the one the adaptive loop would have used.
+@given(
+    lengths=st.lists(st.integers(min_value=0, max_value=100_000), max_size=300),
+    reserved=st.integers(min_value=0, max_value=100_000),
+    history=st.integers(min_value=1, max_value=50),
+)
+def test_inv_10_the_estimator_bookkeeping_stays_well_formed(lengths, reserved, history):
+    estimator = QuantileEstimator(min_samples=1, history=history, adapt_quantile=True)
+    context = RequestContext(model="claude")
+    for length in lengths:
+        estimator.record(
+            Observation(
+                context=context,
+                reserved=Cost(output_tokens=reserved),
+                actual=Cost(output_tokens=length),
+                at_ms=0.0,
+            )
+        )
+    stats = estimator.statistics(context)
+    if not lengths:
+        assert stats is None
+        return
+    assert 0 <= stats.samples <= history
+    assert stats.samples == min(len(lengths), history)
+    assert stats.observations == len(lengths)
+    assert 0.0 <= stats.overrun_ratio <= 1.0
+    assert stats.error_ratio is None or stats.error_ratio >= 0.0
+    if all(length == 0 for length in lengths):
+        assert stats.error_ratio is None
+    low, high = DEFAULT_QUANTILE_BOUNDS
+    assert low <= stats.quantile <= high

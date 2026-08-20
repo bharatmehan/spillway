@@ -87,6 +87,11 @@ version is below 0.1, any release may change anything.
   the point it was asked for, and never leaves the range of what was actually seen. This is the
   promise everything else rests on, and it is a promise about an interpolation and a rounding,
   both easy to get wrong in the direction that quietly under-reserves.
+- A property covering the estimator's own bookkeeping. Over any sequence of observations the
+  sample count stays inside the ring, the overrun share stays inside [0, 1], the error ratio is
+  never negative, and it is absent rather than infinite when a request generated nothing. An
+  infinity there would poison every number a user reads afterwards, including the one the
+  adaptive quantile would have moved on.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
