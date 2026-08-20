@@ -31,6 +31,9 @@ version is below 0.1, any release may change anything.
   waiter in the lowest band below it rather than refusing, and refuses when the arrival is itself
   the lowest priority waiting. No waiter is ever dropped without another taking its place, so the
   total number waiting never grows.
+- A callback on the lease, called once whichever way it finishes. Capacity coming back is the
+  event somebody else is waiting for, and finding out by asking again on a timer would make every
+  queued request pay for the delay.
 
 ## 0.0.2 (2026-08-18)
 

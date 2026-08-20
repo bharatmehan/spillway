@@ -7,7 +7,7 @@ or was cancelled halfway through.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import Enum
 
 from spillway.core.cost import Cost
@@ -60,6 +60,11 @@ class Lease:
         acquired_at_ms: When it was taken.
         state: Where this lease is in its life.
 
+    A lease also takes an `on_release` callback, called once whichever way it
+    finishes. Capacity coming back is the event somebody else has been waiting
+    for, and a limiter that only learned about it by asking again on a timer
+    would make every queued request pay for the delay.
+
     Example:
         >>> from spillway.core.clock import FakeClock
         >>> from spillway.core.scope import Scope
@@ -104,6 +109,7 @@ class Lease:
         store: SyncStore,
         explanation: AdmissionExplanation,
         waited_ms: float = 0.0,
+        on_release: Callable[[], None] | None = None,
     ) -> None:
         """Hold the reservation described by `explanation`."""
         self.id = id
@@ -116,6 +122,7 @@ class Lease:
         self._store = store
         self._explanation = explanation
         self._waited_ms = waited_ms
+        self._on_release = on_release
         self._reason: str | None = None
 
     def __repr__(self) -> str:
@@ -172,6 +179,8 @@ class Lease:
         except LeaseExpired:
             self.state = LeaseState.EXPIRED
             raise
+        finally:
+            self._released()
         self.state = LeaseState.SETTLED
 
     def abandon(self, reason: str | None = None) -> None:
@@ -187,8 +196,23 @@ class Lease:
         if self.state is not LeaseState.ACQUIRED:
             return
         self._reason = reason
-        self._store.release_sync(self.id)
+        try:
+            self._store.release_sync(self.id)
+        finally:
+            self._released()
         self.state = LeaseState.ABANDONED
+
+    def _released(self) -> None:
+        """Say that this lease has given up whatever it was holding.
+
+        Called once, on every path that ends a lease, including the one where
+        the settlement found the reservation already expired: the capacity came
+        back when it was reclaimed, so somebody waiting for it should still be
+        told. Abandoning a lease that already finished notifies nothing, since
+        nothing came back the second time.
+        """
+        if self._on_release is not None:
+            self._on_release()
 
     def _require_held(self) -> None:
         """Refuse to act on a lease that is no longer holding anything.

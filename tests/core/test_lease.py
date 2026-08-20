@@ -30,9 +30,9 @@ def dimensions():
     return [Rate("output_tpm", limit=1_000), Concurrency("generations", limit=4)]
 
 
-def take(store, clock, dimensions, reserved):
+def take(store, clock, dimensions, reserved, on_release=None, ttl_ms=60_000.0):
     claims = [d.claim(reserved, ACME) for d in dimensions]
-    result = store.reserve_sync(claims, ttl_ms=60_000.0, scope=ACME.key, priority=0)
+    result = store.reserve_sync(claims, ttl_ms=ttl_ms, scope=ACME.key, priority=0)
     assert result.granted
     return Lease(
         id=result.lease_id,
@@ -43,6 +43,7 @@ def take(store, clock, dimensions, reserved):
         dimensions=dimensions,
         store=store,
         explanation=AdmissionExplanation(admitted=True, scope=ACME.key, priority=0),
+        on_release=on_release,
     )
 
 
@@ -160,3 +161,58 @@ def test_a_lease_prints_what_it_holds_and_whether_it_still_does(store, clock, di
     assert "state='acquired'" in repr(lease)
     lease.abandon()
     assert "state='abandoned'" in repr(lease)
+
+
+def test_settling_says_that_capacity_came_back(store, clock, dimensions):
+    # Somebody may be waiting for exactly this. A limiter that only found out
+    # by asking again on a timer would make every queued request pay the delay.
+    calls = []
+
+    def released():
+        calls.append(1)
+
+    lease = take(store, clock, dimensions, Cost(output_tokens=800), on_release=released)
+    lease.settle(input=0, output=200)
+    assert len(calls) == 1
+
+
+def test_abandoning_says_that_capacity_came_back(store, clock, dimensions):
+    calls = []
+
+    def released():
+        calls.append(1)
+
+    lease = take(store, clock, dimensions, Cost(output_tokens=800), on_release=released)
+    lease.abandon()
+    assert len(calls) == 1
+
+
+def test_abandoning_a_finished_lease_says_nothing(store, clock, dimensions):
+    # Nothing came back the second time, so there is nothing to announce.
+    calls = []
+
+    def released():
+        calls.append(1)
+
+    lease = take(store, clock, dimensions, Cost(output_tokens=800), on_release=released)
+    lease.settle(input=0, output=200)
+    lease.abandon()
+    assert len(calls) == 1
+
+
+def test_an_expired_settlement_still_says_that_capacity_came_back(store, clock, dimensions):
+    # The capacity came back when the reservation was reclaimed, so whoever is
+    # waiting for it should hear about it even though the settlement failed.
+    calls = []
+
+    def released():
+        calls.append(1)
+
+    lease = take(
+        store, clock, dimensions, Cost(output_tokens=800), on_release=released, ttl_ms=100.0
+    )
+    clock.advance(101)
+    store.snapshot_sync([])
+    with pytest.raises(LeaseExpired):
+        lease.settle(input=0, output=200)
+    assert len(calls) == 1
