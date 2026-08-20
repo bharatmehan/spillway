@@ -28,20 +28,6 @@ _log = logging.getLogger(__name__)
 
 _warned_about_unsettled = False
 
-RESERVATION_QUANTILE = 0.9
-"""Which point of the predicted output distribution to reserve.
-
-Reserving the median means overrunning half the time, which defeats the limit.
-Reserving the worst case is what a provider does and it collapses throughput.
-The ninth decile overruns around one request in ten, and because the surplus is
-credited back the moment the real figure is known, holding it costs almost
-nothing.
-
-Nothing observes this yet: both distributions available so far answer every
-quantile with the same number. It becomes load bearing once output length is
-predicted from history.
-"""
-
 # ponytail: a flat expiry, wrong for both a two second classification and a six
 # minute reasoning call. It becomes a function of observed durations once those
 # are being measured. Until then a call that runs longer than this loses its
@@ -595,7 +581,7 @@ class AdmitContext:
             )
         return Cost(
             input_tokens=estimate.input,
-            output_tokens=estimate.output.quantile(RESERVATION_QUANTILE),
+            output_tokens=estimate.output.quantile(estimate.quantile),
             requests=1,
         )
 

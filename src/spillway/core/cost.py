@@ -244,6 +244,22 @@ class Distribution:
         return math.ceil(interpolated)
 
 
+RESERVATION_QUANTILE = 0.9
+"""Which point of a predicted output distribution to reserve, by default.
+
+Reserving the median means overrunning half the time, which defeats the limit.
+Reserving the worst case is what a provider does and it collapses throughput.
+The ninth decile overruns around one request in ten, and because the surplus is
+credited back the moment the real figure is known, holding it costs almost
+nothing.
+
+Output length distributions are heavy tailed, so the ninety ninth percentile can
+be many multiples of the ninetieth and pushing the quantile up costs in a way
+that is not linear. An estimator that learns may carry its own number here
+instead.
+"""
+
+
 @dataclass(frozen=True)
 class Estimate:
     """What a request is predicted to cost, before it is made.
@@ -258,21 +274,45 @@ class Estimate:
         output: Predicted output length.
         model: The model this estimate is for, when known. Later stages key
             learned statistics on it.
+        quantile: Which point of `output` to reserve. It travels with the
+            estimate rather than being fixed by the limiter, because an
+            estimator that calibrates itself has to be able to move it, and a
+            number the limiter then ignored would be no calibration at all.
 
     Example:
         >>> estimate = Estimate(input=12_400, output=Distribution.point(415))
-        >>> estimate.input, estimate.output.quantile(0.9)
+        >>> estimate.input, estimate.output.quantile(estimate.quantile)
         (12400, 415)
+
+        A wider quantile on a history that has seen a long tail reserves more.
+
+        >>> observed = Distribution.empirical([300, 320, 340, 380, 4_100])
+        >>> careful = Estimate(input=100, output=observed, quantile=0.99)
+        >>> careful.output.quantile(careful.quantile)
+        3952
     """
 
     input: int
     output: Distribution
     model: str | None = None
+    quantile: float = RESERVATION_QUANTILE
 
     def __post_init__(self) -> None:
-        """Reject a negative input count, which no prompt can have."""
+        """Reject a negative input count, and a quantile that is not one.
+
+        Raises:
+            ValueError: if `input` is negative, or if `quantile` is outside
+                [0, 1].
+        """
         if self.input < 0:
             message = f"An input token count cannot be negative, got {self.input}."
+            raise ValueError(message)
+        if not 0.0 <= self.quantile <= 1.0:
+            message = (
+                f"A reservation quantile must be between 0 and 1 inclusive, got "
+                f"{self.quantile}. It is which point of the predicted output to reserve, "
+                f"so 0.9 reserves what nine requests in ten come in under."
+            )
             raise ValueError(message)
 
 
@@ -333,7 +373,7 @@ def default_estimate(
 
     Example:
         >>> default_estimate("hello there", max_tokens=256)
-        Estimate(input=4, output=Distribution(kind='bounded', value=256), model=None)
+        Estimate(input=4, output=Distribution(kind='bounded', value=256), model=None, quantile=0.9)
         >>> default_estimate([{"role": "user", "content": "hi"}], max_tokens=10).input
         1
         >>> default_estimate().output.value == DEFAULT_MAX_OUTPUT_TOKENS

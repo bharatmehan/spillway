@@ -2,7 +2,7 @@
 
 import pytest
 
-from spillway.core.cost import Distribution, Estimate
+from spillway.core.cost import RESERVATION_QUANTILE, Distribution, Estimate
 
 
 def test_a_point_answers_every_quantile_with_the_same_value():
@@ -112,3 +112,20 @@ def test_an_exact_boundary_is_not_pushed_up_by_arithmetic_noise():
     # a hair above 2612. Ceiling that raw would reserve 2613 for no reason but
     # float representation, on every quantile that falls on a whole token.
     assert Distribution.empirical([120, 300, 340, 380, 4_100]).quantile(0.9) == 2_612
+
+
+def test_an_estimate_reserves_at_the_ninth_decile_by_default():
+    assert Estimate(input=1, output=Distribution.point(1)).quantile == RESERVATION_QUANTILE
+
+
+def test_an_estimate_may_carry_its_own_quantile():
+    # An estimator that calibrates itself has to be able to move this. A number
+    # the limiter then ignored would be no calibration at all.
+    careful = Estimate(input=1, output=Distribution.empirical([10, 20, 30]), quantile=1.0)
+    assert careful.output.quantile(careful.quantile) == 30
+
+
+@pytest.mark.parametrize("q", [-0.01, 1.01])
+def test_an_estimate_quantile_outside_the_unit_interval_is_refused(q):
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        Estimate(input=1, output=Distribution.point(1), quantile=q)

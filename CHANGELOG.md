@@ -10,6 +10,10 @@ version is below 0.1, any release may change anything.
 - An empirical distribution over the output lengths a route has actually produced. This is what
   makes reserving less than the worst case possible: with a history to read, the ninth decile of
   what really happened is a far smaller number than the maximum a caller was willing to allow.
+- The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
+  An estimator that calibrates itself has to be able to move that number, and a number the limiter
+  ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
+  changes for anyone who does not set it.
 
 ## 0.0.3 (2026-08-20)
 

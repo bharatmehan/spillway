@@ -3,11 +3,11 @@
 import pytest
 
 from spillway.core.clock import FakeClock
-from spillway.core.cost import Cost, Distribution, Estimate
+from spillway.core.cost import RESERVATION_QUANTILE, Cost, Distribution, Estimate
 from spillway.core.errors import AdmissionDenied, ConfigurationError
 from spillway.core.lease import LeaseState
 from spillway.core.scope import Priority, Scope
-from spillway.core.spillway import RESERVATION_QUANTILE, Spillway
+from spillway.core.spillway import Spillway
 from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
 from spillway.stores.memory import MemoryStore
