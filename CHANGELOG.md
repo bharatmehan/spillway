@@ -24,6 +24,10 @@ version is below 0.1, any release may change anything.
   output length is genuinely predictable, such as a classifier answering with one of five labels
   or an extractor filling a fixed schema. Input is still counted per request, because inventing
   uncertainty about a number that can be counted would help nobody.
+- `CallableEstimator`, which wraps any function from a request context to a distribution. This
+  library does not ship an output length predictor and will not, because that is a research
+  artefact with a heavy dependency tree and the quickstart has to run with nothing installed. It
+  ships the socket instead, and this is the socket.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
