@@ -225,13 +225,25 @@ class Spillway:
         """Reserve `reserved` across every dimension, or refuse.
 
         Raises:
-            AdmissionDenied: if any dimension has no room.
+            AdmissionDenied: if any dimension has no room, or if the request is
+                larger than a limit and so could never have room.
         """
         claims: list[Claim] = []
         dimension_of_key: dict[str, str] = {}
         for dimension in self._dimensions:
             claim = dimension.claim(reserved, scope)
             if claim is not None:
+                if claim.cost > claim.limit:
+                    raise AdmissionDenied(
+                        _impossible_message(dimension.name, claim.cost, claim.limit),
+                        binding_dimension=dimension.name,
+                        explanation=AdmissionExplanation(
+                            admitted=False,
+                            scope=scope.key,
+                            priority=priority,
+                            binding_dimension=dimension.name,
+                        ),
+                    )
                 claims.append(claim)
                 dimension_of_key[claim.key] = dimension.name
 
@@ -276,6 +288,20 @@ class Spillway:
             store=self._store,
             explanation=explanation,
         )
+
+
+def _impossible_message(name: str, cost: float, limit: float) -> str:
+    """Say that no amount of waiting will help, and what would.
+
+    Without this the request sits at the head of its priority band for ever,
+    blocking everything behind it, and nothing about the symptom points at the
+    one request that is too big to ever fit.
+    """
+    return (
+        f"This request reserves {cost:,.0f} against a {name} limit of {limit:,.0f}. "
+        f"It can never be admitted, however long it waits. Either raise the limit, "
+        f"or lower max_tokens, or split the request."
+    )
 
 
 def _refusal_message(binding: str | None, retry_after_ms: float | None) -> str:

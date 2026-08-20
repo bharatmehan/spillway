@@ -207,3 +207,40 @@ def test_either_a_timeout_or_a_deadline_alone_is_accepted():
     limiter = Spillway()
     assert limiter.admit(timeout=5.0) is not None
     assert limiter.admit(deadline=1_000.0) is not None
+
+
+async def test_a_request_larger_than_a_limit_is_refused_at_once(clock):
+    # It would otherwise sit at the head of its band for ever, blocking every
+    # request behind it, and nothing about that symptom names the cause.
+    limiter = Spillway(
+        dimensions=[Rate("output_tpm", limit=4_000)],
+        store=MemoryStore(clock=clock),
+        clock=clock,
+    )
+    with pytest.raises(AdmissionDenied, match="can never be admitted") as raised:
+        await limiter.admit(max_tokens=5_200).acquire()
+    assert "5,200" in str(raised.value)
+    assert "4,000" in str(raised.value)
+    assert raised.value.binding_dimension == "output_tpm"
+    assert raised.value.retry_after is None
+
+
+async def test_a_request_exactly_the_size_of_a_limit_is_admitted(clock):
+    limiter = Spillway(
+        dimensions=[Rate("output_tpm", limit=4_000)],
+        store=MemoryStore(clock=clock),
+        clock=clock,
+    )
+    lease = await limiter.admit(max_tokens=4_000).acquire()
+    assert lease.state is LeaseState.ACQUIRED
+
+
+async def test_the_guard_reserves_nothing_before_refusing(clock):
+    limiter = Spillway(
+        dimensions=[Rate("rpm", limit=10), Rate("output_tpm", limit=4_000)],
+        store=MemoryStore(clock=clock),
+        clock=clock,
+    )
+    with pytest.raises(AdmissionDenied, match="can never be admitted"):
+        await limiter.admit(max_tokens=5_200).acquire()
+    assert limiter.snapshot().dimensions["rpm"].used == 0.0

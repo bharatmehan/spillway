@@ -15,6 +15,9 @@ version is below 0.1, any release may change anything.
   events every run.
 - `admit()` refuses a timeout and a deadline given together. They say the same thing two ways and
   there is no honest answer when they disagree.
+- A guard against a request that is larger than a limit it draws on. No amount of waiting makes
+  it fit, so it is refused at once with the two numbers and the three ways to fix it, rather than
+  waiting for a capacity that can never arrive.
 
 ## 0.0.2 (2026-08-18)
 
