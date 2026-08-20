@@ -10,6 +10,9 @@ version is below 0.1, any release may change anything.
 - An asynchronous sleep on the `Clock` protocol. Waiting is the one thing a limiter does that
   cannot be pure arithmetic, and routing it through the clock is what keeps it testable without
   the suite sleeping for real.
+- Sleeping on the fake clock. A sleeper is released when the clock is advanced past its wake
+  time, so a test can run ten minutes of waiting in a millisecond and get the same sequence of
+  events every run.
 
 ## 0.0.2 (2026-08-18)
 
