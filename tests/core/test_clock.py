@@ -58,3 +58,13 @@ def test_both_implementations_satisfy_the_protocol():
     clocks: list[Clock] = [MonotonicClock(), FakeClock()]
     for clock in clocks:
         assert isinstance(clock.now_ms(), float)
+
+
+async def test_the_real_clock_actually_waits():
+    # The delay is in milliseconds and the standard library sleep takes
+    # seconds. A missing division by a thousand makes every wait in the
+    # dispatcher a thousand times too long, which looks exactly like a hang.
+    clock = MonotonicClock()
+    before = clock.now_ms()
+    await clock.sleep(20)
+    assert clock.now_ms() - before >= 15.0

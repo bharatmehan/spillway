@@ -3,6 +3,14 @@
 Notable changes to this project, newest first. This project uses semantic versioning. While the
 version is below 0.1, any release may change anything.
 
+## Unreleased
+
+### Added
+
+- An asynchronous sleep on the `Clock` protocol. Waiting is the one thing a limiter does that
+  cannot be pure arithmetic, and routing it through the clock is what keeps it testable without
+  the suite sleeping for real.
+
 ## 0.0.2 (2026-08-18)
 
 ### Added

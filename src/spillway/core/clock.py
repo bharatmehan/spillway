@@ -11,6 +11,7 @@ advanced by hand makes the whole decision path deterministic.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Protocol
 
@@ -27,6 +28,7 @@ class Clock(Protocol):
     Implement this to drive the library from your own time source.
 
     Example:
+        >>> import asyncio
         >>> class CountingClock:
         ...     def __init__(self) -> None:
         ...         self.calls = 0
@@ -34,11 +36,17 @@ class Clock(Protocol):
         ...     def now_ms(self) -> float:
         ...         self.calls += 1
         ...         return float(self.calls)
+        ...
+        ...     async def sleep(self, delay_ms: float) -> None:
+        ...         self.calls += int(delay_ms)
         >>> clock: Clock = CountingClock()
         >>> clock.now_ms()
         1.0
         >>> clock.now_ms()
         2.0
+        >>> asyncio.run(clock.sleep(10))
+        >>> clock.now_ms()
+        13.0
     """
 
     def now_ms(self) -> float:
@@ -46,6 +54,19 @@ class Clock(Protocol):
 
         Only differences between two readings are meaningful. The origin is
         arbitrary and may differ between implementations.
+        """
+        ...
+
+    async def sleep(self, delay_ms: float) -> None:
+        """Wait for `delay_ms` milliseconds of this clock's time.
+
+        On the real clock this is an ordinary asynchronous sleep. On a clock
+        driven by hand it returns only when that clock is advanced past the
+        wake time, which is what lets a test run ten minutes of waiting in a
+        millisecond of real time.
+
+        A delay of zero or less returns without waiting, though it may still
+        yield control.
         """
         ...
 
@@ -58,9 +79,11 @@ class MonotonicClock:
     rate window look replenished, when neither has happened.
 
     Example:
+        >>> import asyncio
         >>> clock = MonotonicClock()
         >>> clock.now_ms() <= clock.now_ms()
         True
+        >>> asyncio.run(clock.sleep(1))
     """
 
     __slots__ = ()
@@ -68,6 +91,10 @@ class MonotonicClock:
     def now_ms(self) -> float:
         """Return the current monotonic time in milliseconds."""
         return time.monotonic_ns() / _NS_PER_MS
+
+    async def sleep(self, delay_ms: float) -> None:
+        """Wait for `delay_ms` milliseconds, giving the event loop up in the meantime."""
+        await asyncio.sleep(delay_ms / 1000.0)
 
 
 class FakeClock:
