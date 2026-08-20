@@ -197,3 +197,72 @@ def test_a_threshold_the_history_can_never_reach_is_refused():
     # so the route's own history would never be used at all.
     with pytest.raises(ConfigurationError, match="never be used at all"):
         QuantileEstimator(min_samples=100, history=50)
+
+
+def test_a_route_nobody_has_seen_has_no_statistics():
+    assert QuantileEstimator().statistics(RequestContext(model="claude")) is None
+
+
+def test_the_overrun_ratio_counts_settlements_that_used_more_than_was_reserved():
+    estimator = QuantileEstimator()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [50] * 9, reserved=100)
+    teach(estimator, context, [900], reserved=100)
+    assert estimator.statistics(context).overrun_ratio == pytest.approx(0.1)
+
+
+def test_reserving_exactly_what_was_used_is_not_an_overrun():
+    # An overrun is having used more than was held, not having got it exactly
+    # right. Counting the boundary would inflate the number the adaptive loop
+    # reads and push the quantile up for no reason.
+    estimator = QuantileEstimator()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [100] * 10, reserved=100)
+    assert estimator.statistics(context).overrun_ratio == 0.0
+
+
+def test_the_error_ratio_averages_reserved_over_actual():
+    estimator = QuantileEstimator()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [100, 200], reserved=400)
+    assert estimator.statistics(context).error_ratio == pytest.approx(3.0)
+
+
+def test_the_error_ratio_is_undefined_rather_than_infinite_when_nothing_was_generated():
+    # Reserved over zero has no value. Calling it infinite would poison the
+    # average with a number that means nothing.
+    estimator = QuantileEstimator()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [0, 0], reserved=400)
+    assert estimator.statistics(context).error_ratio is None
+
+
+def test_a_settlement_that_generated_nothing_still_counts_as_an_observation():
+    estimator = QuantileEstimator()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [0, 0], reserved=400)
+    assert estimator.statistics(context).observations == 2
+
+
+def test_the_error_ratio_ignores_only_the_empty_settlements():
+    estimator = QuantileEstimator()
+    context = RequestContext(model="claude")
+    teach(estimator, context, [0, 100], reserved=400)
+    assert estimator.statistics(context).error_ratio == pytest.approx(4.0)
+
+
+def test_observations_outlive_the_ring():
+    # The ring forgets, on purpose. The count of what has been seen does not,
+    # because it is what tells someone whether a route is busy at all.
+    estimator = QuantileEstimator(min_samples=1, history=5)
+    context = RequestContext(model="claude")
+    teach(estimator, context, [10] * 50)
+    stats = estimator.statistics(context)
+    assert (stats.samples, stats.observations) == (5, 50)
+
+
+def test_the_statistics_report_the_route_s_own_quantile():
+    estimator = QuantileEstimator(quantile=0.75, min_samples=1)
+    context = RequestContext(model="claude")
+    teach(estimator, context, [10])
+    assert estimator.statistics(context).quantile == 0.75

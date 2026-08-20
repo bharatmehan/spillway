@@ -70,6 +70,43 @@ class _Route:
 
     ring: deque[int]
     quantile: float
+    observations: int = 0
+    overruns: int = 0
+    error_ratio_sum: float = 0.0
+    error_ratio_count: int = 0
+
+
+@dataclass(frozen=True)
+class RouteStatistics:
+    """How well a route's predictions have been doing.
+
+    Attributes:
+        samples: How many output lengths the ring is holding right now.
+        observations: How many settlements this route has ever reported.
+        quantile: What this route is currently reserving at.
+        overrun_ratio: The share of settlements that used more than was
+            reserved. Compare it with one minus the quantile: reserving at the
+            ninth decile promises roughly one in ten, and a number far above
+            that means the history no longer describes the traffic.
+        error_ratio: Reserved divided by actual, averaged over the settlements
+            where anything was generated at all. Around 1.1 for a ninth decile
+            reservation is healthy. Around 5 means the reservation is nowhere
+            near the traffic and most of the headroom is being wasted, which is
+            worth acting on even though nothing is technically wrong.
+
+    Example:
+        >>> RouteStatistics(
+        ...     samples=100, observations=100, quantile=0.9,
+        ...     overrun_ratio=0.09, error_ratio=1.14,
+        ... ).overrun_ratio
+        0.09
+    """
+
+    samples: int
+    observations: int
+    quantile: float
+    overrun_ratio: float
+    error_ratio: float | None
 
 
 class QuantileEstimator:
@@ -211,10 +248,41 @@ class QuantileEstimator:
             quantile=route.quantile,
         )
 
+    def statistics(self, context: RequestContext) -> RouteStatistics | None:
+        """How well this route's predictions have been doing, or None if unseen.
+
+        The two ratios answer different questions and neither replaces the
+        other. The overrun ratio says whether the quantile is still telling the
+        truth. The error ratio says whether it is worth what it costs.
+        """
+        route = self._routes.get(self._route_key(context))
+        if route is None:
+            return None
+        return RouteStatistics(
+            samples=len(route.ring),
+            observations=route.observations,
+            quantile=route.quantile,
+            overrun_ratio=route.overruns / route.observations if route.observations else 0.0,
+            error_ratio=(
+                route.error_ratio_sum / route.error_ratio_count if route.error_ratio_count else None
+            ),
+        )
+
     def record(self, observation: Observation) -> None:
-        """Remember what this request really produced."""
+        """Remember what this request really produced, and how wrong the guess was."""
         route = self._route_for(observation.context)
-        route.ring.append(observation.actual.output_tokens)
+        actual = observation.actual.output_tokens
+        reserved = observation.reserved.output_tokens
+        route.ring.append(actual)
+        route.observations += 1
+        if actual > reserved:
+            route.overruns += 1
+        if actual > 0:
+            # Skipped rather than recorded when nothing was generated. Reserved
+            # over zero is undefined, and calling it infinite would poison the
+            # average with a number that means nothing.
+            route.error_ratio_sum += reserved / actual
+            route.error_ratio_count += 1
 
     def _route_for(self, context: RequestContext) -> _Route:
         """The state for `context`'s route, created on first sight."""

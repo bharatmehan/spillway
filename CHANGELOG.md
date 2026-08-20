@@ -57,6 +57,13 @@ version is below 0.1, any release may change anything.
   a ninth decile off four samples would hold back traffic on the strength of almost nothing, and
   being confidently wrong is worse there than being safe and expensive. The fallback is any
   estimator, so "until you know better, reserve five hundred" is one argument.
+- Per route statistics on the quantile estimator: how many observations it has, what it is
+  reserving at, the share of settlements that overran, and reserved divided by actual averaged
+  over the ones that generated anything. The two ratios answer different questions and neither
+  replaces the other. The overrun ratio says whether the quantile is still telling the truth. The
+  error ratio says whether it is worth what it costs, and an error ratio near five is a caller
+  wasting most of their headroom even though nothing is technically wrong. The error ratio is
+  reported as absent rather than infinite when a request generated no output at all.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing
