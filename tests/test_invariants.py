@@ -353,3 +353,19 @@ def test_inv_7_no_wakeup_is_ever_lost(operations):
     for task in waiting:
         assert task.done(), "a waiter was never woken"
         task.result()
+
+
+# INV-8. Queue accounting always adds up.
+#
+# Every request is queued or finished, never both and never neither, and the
+# total depth is the sum of the bands. A waiter counted in two places is a
+# waiter that gets served twice; one counted nowhere is one that is never
+# served at all.
+@given(operations=SCENARIOS)
+def test_inv_8_every_waiter_is_queued_or_finished(operations):
+    def check(limiter, waiting):
+        queue = limiter._queue
+        assert queue.depth == sum(queue.depths().values())
+        assert queue.depth == sum(1 for task in waiting if not task.done())
+
+    asyncio.run(_drive(operations, check))

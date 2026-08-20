@@ -61,6 +61,8 @@ version is below 0.1, any release may change anything.
   and clock advances, every waiter that could be admitted is admitted once nothing more arrives.
   This is the class of bug that otherwise appears in production as an intermittent hang nobody can
   reproduce.
+- A property covering the queue's own bookkeeping: every request is queued or finished, never both
+  and never neither, and the total depth is always the sum of the bands.
 
 ### Changed
 
