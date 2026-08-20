@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -95,6 +95,10 @@ class Waiter:
             much later.
         sequence: Arrival order across the whole queue, assigned on push.
         position: How many were ahead of it in its own band on arrival.
+        on_settle: Handed to the lease once this waiter is granted one, so a
+            settlement reaches whatever is learning from it. Carried here
+            rather than rebuilt, because it closes over what the caller asked
+            for and only the caller knew that.
 
     Example:
         >>> import asyncio
@@ -127,6 +131,7 @@ class Waiter:
     refused_at_ms: float = 0.0
     sequence: int = 0
     position: int = 0
+    on_settle: Callable[[Cost], None] | None = field(default=None, repr=False)
 
 
 class WaitQueue:

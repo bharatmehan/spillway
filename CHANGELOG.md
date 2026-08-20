@@ -38,6 +38,11 @@ version is below 0.1, any release may change anything.
   every call to a model and quite predictable within one task, so `tags={"task": "summarise"}` is
   usually worth more than any amount of cleverness elsewhere. Copied on the way in, so a caller
   reusing one dictionary cannot rewrite the past.
+- Settled costs are reported back to the estimator. Every settlement carries what was reserved,
+  what was really used, and what was known about the request beforehand, which is the whole of
+  what an estimator needs to correct itself. Reported before the store is asked, so a request that
+  outran its reservation still teaches: the bookkeeping failed, the request still generated what
+  it generated. An abandoned request teaches nothing, because it produced nothing.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing

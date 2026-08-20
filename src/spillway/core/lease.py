@@ -60,10 +60,12 @@ class Lease:
         acquired_at_ms: When it was taken.
         state: Where this lease is in its life.
 
-    A lease also takes an `on_release` callback, called once whichever way it
-    finishes. Capacity coming back is the event somebody else has been waiting
-    for, and a limiter that only learned about it by asking again on a timer
-    would make every queued request pay for the delay.
+    A lease also takes two callbacks. `on_release` is called once whichever way
+    it finishes: capacity coming back is the event somebody else has been
+    waiting for, and a limiter that only learned about it by asking again on a
+    timer would make every queued request pay for the delay. `on_settle` is
+    called with the real cost, and only from a settlement, because an abandoned
+    request produced nothing and there is nothing to learn from it.
 
     Example:
         >>> from spillway.core.clock import FakeClock
@@ -110,6 +112,7 @@ class Lease:
         explanation: AdmissionExplanation,
         waited_ms: float = 0.0,
         on_release: Callable[[], None] | None = None,
+        on_settle: Callable[[Cost], None] | None = None,
     ) -> None:
         """Hold the reservation described by `explanation`."""
         self.id = id
@@ -123,6 +126,7 @@ class Lease:
         self._explanation = explanation
         self._waited_ms = waited_ms
         self._on_release = on_release
+        self._on_settle = on_settle
         self._reason: str | None = None
 
     def __repr__(self) -> str:
@@ -170,10 +174,12 @@ class Lease:
             delta = dimension.settle(self.reserved, actual, self.scope)
             if delta is not None:
                 deltas.append(delta)
-        # The gap between self.reserved and actual is the estimate error, and
-        # this is the one place it can be observed. When something needs it,
-        # read it here. Do not grow a general observer mechanism around it: one
-        # call site is what keeps the shape free for whatever arrives.
+        # Reported before the store is asked, not after. The gap between
+        # self.reserved and actual is the estimate error, and it is just as
+        # true when the reservation turns out to have already expired: the
+        # bookkeeping failed, the request still generated what it generated.
+        if self._on_settle is not None:
+            self._on_settle(actual)
         try:
             self._store.settle_sync(self.id, deltas)
         except LeaseExpired:

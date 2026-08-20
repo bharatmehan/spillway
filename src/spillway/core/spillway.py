@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 
@@ -20,7 +20,7 @@ from spillway.core.lease import Lease, LeaseState
 from spillway.core.queue import DEFAULT_QUEUE_CAPACITY, QueueFullPolicy, Waiter, WaitQueue
 from spillway.core.scope import Priority, Scope
 from spillway.dimensions.base import Dimension, claim_key
-from spillway.estimators.base import Estimator, RequestContext
+from spillway.estimators.base import Estimator, Observation, RequestContext
 from spillway.estimators.max_tokens import MaxTokensEstimator
 from spillway.observability.explain import AdmissionExplanation
 from spillway.stores.base import Claim, DuplexStore, Utilisation
@@ -319,6 +319,7 @@ class Spillway:
         reserved: Cost,
         waited_ms: float = 0.0,
         queue_position: int | None = None,
+        on_settle: Callable[[Cost], None] | None = None,
     ) -> Lease:
         """Ask the store for the whole batch once, and report what happened.
 
@@ -379,6 +380,7 @@ class Spillway:
             explanation=explanation,
             waited_ms=waited_ms,
             on_release=self._dispatcher.notify,
+            on_settle=on_settle,
         )
 
     def _deadline_ms(
@@ -405,12 +407,34 @@ class Spillway:
             return None
         return now_ms + self._default_timeout * 1000.0
 
+    def _learn_from(self, context: RequestContext, reserved: Cost) -> Callable[[Cost], None]:
+        """Build the callback that tells the estimator how wrong it was.
+
+        Recorded whether or not the estimator produced this reservation. A
+        caller who passed an explicit estimate still generated a real number of
+        output tokens on that route, and skipping those would leave the
+        estimator blind exactly when a caller mixes the two.
+        """
+
+        def learn(actual: Cost) -> None:
+            self._estimator.record(
+                Observation(
+                    context=context,
+                    reserved=reserved,
+                    actual=actual,
+                    at_ms=self._clock.now_ms(),
+                )
+            )
+
+        return learn
+
     async def _acquire(
         self,
         *,
         scope: Scope,
         priority: int,
         reserved: Cost,
+        context: RequestContext,
         timeout: float | None = None,
         deadline: float | None = None,
     ) -> Lease:
@@ -428,6 +452,7 @@ class Spillway:
             Shed: if the work is sheddable and its band is full.
         """
         started_ms = self._clock.now_ms()
+        on_settle = self._learn_from(context, reserved)
         claims, dimension_of_key = self._claims_for(
             scope=scope,
             priority=priority,
@@ -445,6 +470,7 @@ class Spillway:
                 scope=scope,
                 priority=priority,
                 reserved=reserved,
+                on_settle=on_settle,
             )
         except AdmissionDenied as refusal:
             if deadline_ms is not None and deadline_ms <= self._clock.now_ms():
@@ -461,6 +487,7 @@ class Spillway:
                     future=asyncio.get_running_loop().create_future(),
                     refusal=refusal,
                     refused_at_ms=self._clock.now_ms(),
+                    on_settle=on_settle,
                 )
             )
 
@@ -580,10 +607,12 @@ class AdmitContext:
             AdmissionTimeout: if the wait ran out.
             Shed: if the work is sheddable and its band is full.
         """
+        context = self._context()
         return await self._limiter._acquire(
             scope=self._scope,
             priority=self._priority,
-            reserved=self._reserved(),
+            reserved=self._reserved(context),
+            context=context,
             timeout=self._timeout,
             deadline=self._deadline,
         )
@@ -598,7 +627,7 @@ class AdmitContext:
             tags=self._tags,
         )
 
-    def _reserved(self) -> Cost:
+    def _reserved(self, context: RequestContext) -> Cost:
         """Work out what to reserve, from the caller's estimate or the limiter's.
 
         Once per acquisition, never once per dispatch attempt. A request that
@@ -608,7 +637,7 @@ class AdmitContext:
         """
         estimate = self._estimate
         if estimate is None:
-            estimate = self._limiter._estimator.estimate(self._context())
+            estimate = self._limiter._estimator.estimate(context)
         return Cost(
             input_tokens=estimate.input,
             output_tokens=estimate.output.quantile(estimate.quantile),

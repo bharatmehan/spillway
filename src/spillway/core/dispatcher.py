@@ -244,6 +244,7 @@ class Dispatcher:
                 reserved=waiter.reserved,
                 waited_ms=self._clock.now_ms() - waiter.queued_at_ms,
                 queue_position=waiter.position,
+                on_settle=waiter.on_settle,
             )
         except AdmissionDenied as refusal:
             waiter.refusal = refusal

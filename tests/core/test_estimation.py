@@ -149,3 +149,86 @@ async def test_tags_do_not_change_what_is_admitted():
     async with limiter.admit(max_tokens=100, tags={"task": "anything"}) as lease:
         assert lease.reserved.output_tokens == 100
         lease.settle(input=0, output=10)
+
+
+async def test_a_settlement_reaches_the_estimator():
+    clock = FakeClock()
+    estimator = Recorder(output=200)
+    limiter = build(clock, estimator)
+    async with limiter.admit(max_tokens=4_096, tags={"task": "summarise"}) as lease:
+        lease.settle(input=12, output=415)
+    observation = estimator.told[0]
+    assert observation.reserved.output_tokens == 200
+    assert observation.actual.output_tokens == 415
+    assert observation.context.tags == {"task": "summarise"}
+
+
+async def test_a_settlement_records_when_it_happened():
+    clock = FakeClock()
+    estimator = Recorder()
+    limiter = build(clock, estimator)
+    async with limiter.admit() as lease:
+        clock.advance(6_200)
+        lease.settle(input=0, output=415)
+    assert estimator.told[0].at_ms == 6_200
+
+
+async def test_an_abandoned_request_teaches_nothing():
+    # It produced no output at all. Recording a zero would drag every route's
+    # history toward zero and make the next prediction worse for no reason.
+    clock = FakeClock()
+    estimator = Recorder()
+    limiter = build(clock, estimator)
+    with pytest.raises(ZeroDivisionError):
+        async with limiter.admit():
+            raise ZeroDivisionError("the call failed")
+    assert estimator.told == []
+
+
+async def test_a_settlement_that_outran_its_expiry_still_teaches():
+    # The bookkeeping failed. The request still generated what it generated,
+    # and that is the fact the estimator is learning.
+    from spillway.core.errors import LeaseExpired
+    from spillway.core.spillway import DEFAULT_LEASE_TTL_MS
+
+    clock = FakeClock()
+    estimator = Recorder()
+    store = MemoryStore(clock=clock)
+    limiter = Spillway(
+        dimensions=[Rate("output_tpm", limit=10_000)],
+        store=store,
+        clock=clock,
+        scope=ACME,
+        estimator=estimator,
+    )
+    lease = await limiter.admit().acquire()
+    clock.advance(DEFAULT_LEASE_TTL_MS + 1)
+    store.snapshot_sync([])
+    with pytest.raises(LeaseExpired):
+        lease.settle(input=0, output=415)
+    assert estimator.told[0].actual.output_tokens == 415
+
+
+async def test_an_explicit_estimate_still_teaches():
+    # The reservation was the caller's, the output length is the route's.
+    clock = FakeClock()
+    estimator = Recorder()
+    limiter = build(clock, estimator)
+    given = Estimate(input=10, output=Distribution.point(999))
+    async with limiter.admit(estimate=given) as lease:
+        lease.settle(input=10, output=50)
+    assert estimator.told[0].actual.output_tokens == 50
+
+
+async def test_a_request_that_waited_still_teaches():
+    clock = FakeClock()
+    estimator = Recorder(output=6_000)
+    limiter = build(clock, estimator, default_timeout=120)
+    first = await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    for _ in range(20):
+        await asyncio.sleep(0)
+    first.settle(input=0, output=10)
+    second = await asyncio.wait_for(waiting, timeout=1)
+    second.settle(input=0, output=25)
+    assert [told.actual.output_tokens for told in estimator.told] == [10, 25]
