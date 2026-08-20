@@ -18,6 +18,8 @@ version is below 0.1, any release may change anything.
   The safe, uninformed baseline, and the limiter's default. It is also the permanently correct
   answer against a provider that charges the requested maximum at admission, because reserving
   less than the provider does buys nothing and guarantees a rate limit response nobody predicted.
+- `count_input`, the character heuristic on its own. Every estimator counts input the same way,
+  and two of them counting it differently would be a difference no user could see or explain.
 - The quantile to reserve at now travels on the estimate rather than being fixed by the limiter.
   An estimator that calibrates itself has to be able to move that number, and a number the limiter
   ignored would be no calibration at all. It still defaults to the ninth decile, so nothing

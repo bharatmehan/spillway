@@ -352,6 +352,32 @@ def _text_length(part: object) -> int:
     return len(str(part))
 
 
+def count_input(prompt: str | Sequence[object] | None) -> int:
+    """Count the input tokens in `prompt`, approximately.
+
+    Uses the character heuristic, so it is within roughly ten to fifteen
+    percent for English prose and drifts further for code and for languages
+    that do not use a Latin script. Undercounting is corrected at settlement
+    exactly like a mistaken output prediction, so the cost of being wrong is a
+    little wasted headroom rather than an overrun.
+
+    Args:
+        prompt: A string, a sequence of message mappings in the shape the
+            provider SDKs use, or nothing at all.
+
+    Example:
+        >>> count_input("hello there")
+        4
+        >>> count_input([{"role": "user", "content": "hi"}])
+        1
+        >>> count_input(None)
+        0
+    """
+    if prompt is None:
+        return 0
+    return math.ceil(_text_length(prompt) / CHARACTERS_PER_TOKEN)
+
+
 def default_estimate(
     prompt: str | Sequence[object] | None = None,
     *,
@@ -385,10 +411,9 @@ def default_estimate(
     if max_tokens is not None and max_tokens < 0:
         message = f"max_tokens cannot be negative, got {max_tokens}."
         raise ValueError(message)
-    characters = _text_length(prompt) if prompt is not None else 0
     reserved_output = DEFAULT_MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
     return Estimate(
-        input=math.ceil(characters / CHARACTERS_PER_TOKEN),
+        input=count_input(prompt),
         output=Distribution.bounded_by(reserved_output),
         model=model,
     )

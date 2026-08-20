@@ -5,6 +5,7 @@ import pytest
 from spillway.core.cost import (
     CHARACTERS_PER_TOKEN,
     DEFAULT_MAX_OUTPUT_TOKENS,
+    count_input,
     default_estimate,
 )
 
@@ -70,3 +71,13 @@ def test_a_negative_maximum_is_refused():
 
 def test_a_zero_maximum_is_allowed():
     assert default_estimate("hi", max_tokens=0).output.value == 0
+
+
+def test_counting_input_on_its_own_agrees_with_the_default_estimate():
+    # Two callers of the same heuristic. If they ever disagree, one estimator
+    # is counting input differently from another for no reason a user could see.
+    assert count_input("hello there") == default_estimate("hello there").input
+
+
+def test_counting_nothing_counts_zero():
+    assert count_input(None) == 0
