@@ -223,3 +223,52 @@ async def test_a_call_level_timeout_beats_the_limiter_default(clock):
 def test_a_negative_default_timeout_is_a_configuration_error(clock):
     with pytest.raises(ConfigurationError, match="cannot be negative"):
         build(clock, [], default_timeout=-1)
+
+
+async def test_cancelling_a_queued_request_takes_it_out_of_the_queue(clock):
+    limiter = build(clock, [Concurrency("generations", limit=1)])
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await spin()
+    assert limiter._queue.depth == 1
+    waiting.cancel()
+    await spin()
+    assert limiter._queue.depth == 0
+
+
+async def test_cancelling_a_queued_request_still_propagates_the_cancellation(clock):
+    limiter = build(clock, [Concurrency("generations", limit=1)])
+    await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await spin()
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+
+async def test_a_cancelled_waiter_does_not_hold_its_band_against_the_others(clock):
+    # It would otherwise sit at the head, selected but listened to by nobody,
+    # while everything behind it waits for a lease it will never take.
+    limiter = build(clock, [Concurrency("generations", limit=1)])
+    held = await limiter.admit().acquire()
+    leaving = asyncio.ensure_future(limiter.admit(priority=100).acquire())
+    await spin()
+    following = asyncio.ensure_future(limiter.admit(priority=0).acquire())
+    await spin()
+    leaving.cancel()
+    await spin()
+    held.settle(input=0, output=0)
+    lease = await asyncio.wait_for(following, 1.0)
+    assert lease.state.value == "acquired"
+
+
+async def test_cancelling_a_queued_request_leaves_no_capacity_held(clock):
+    limiter = build(clock, [Concurrency("generations", limit=1)])
+    held = await limiter.admit().acquire()
+    waiting = asyncio.ensure_future(limiter.admit().acquire())
+    await spin()
+    waiting.cancel()
+    await spin()
+    held.settle(input=0, output=0)
+    await spin()
+    assert limiter.snapshot().dimensions["generations"].used == 0.0

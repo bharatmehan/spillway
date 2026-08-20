@@ -47,6 +47,8 @@ version is below 0.1, any release may change anything.
   nor a deadline. Waiting for ever is almost never what anyone meant, and it is the failure that
   looks like the library hanging rather than like a limit being reached. Set it to zero to refuse
   rather than wait, or to None to wait for as long as it takes.
+- A cancelled request takes itself out of the queue on the way past, so a waiter nobody is
+  listening for cannot hold its band's head against everything behind it.
 
 ### Changed
 

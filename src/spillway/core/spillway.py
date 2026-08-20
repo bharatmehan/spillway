@@ -438,6 +438,11 @@ class Spillway:
     async def _wait_for_room(self, waiter: Waiter) -> Lease:
         """Queue and wait until the dispatcher has an answer.
 
+        A cancelled caller takes itself out of the queue on the way past. The
+        dispatcher would eventually notice and drop it, but not before it has
+        been selected, and a waiter nobody is listening for still holds its
+        band's head against everyone behind it.
+
         Raises:
             AdmissionDenied: if the queue itself has no room for this waiter.
             AdmissionTimeout: if the wait ran out.
@@ -445,7 +450,12 @@ class Spillway:
         """
         self._queue.push(waiter)
         self._dispatcher.ensure_running()
-        return await waiter.future
+        try:
+            return await waiter.future
+        finally:
+            # Harmless when the dispatcher has already taken it out, and
+            # neither side can tell which of them got here first.
+            self._queue.remove(waiter)
 
 
 def _impossible_message(name: str, cost: float, limit: float) -> str:
