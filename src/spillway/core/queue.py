@@ -16,12 +16,19 @@ import itertools
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Literal
 
 from spillway.core.cost import Cost
 from spillway.core.errors import AdmissionDenied, ConfigurationError, Shed
 from spillway.core.lease import Lease
 from spillway.core.scope import Scope
 from spillway.stores.base import Claim
+
+QueueFullPolicy = Literal["reject", "shed_lowest"]
+"""What a full band does with a new arrival."""
+
+QUEUE_FULL_POLICIES: tuple[QueueFullPolicy, ...] = ("reject", "shed_lowest")
+"""Every policy a band understands, for validating what a caller passed."""
 
 DEFAULT_QUEUE_CAPACITY = 10_000
 """How many waiters one priority band holds before it refuses new arrivals.
@@ -161,13 +168,28 @@ class WaitQueue:
         [100, 0, 0]
     """
 
-    def __init__(self, *, capacity: int = DEFAULT_QUEUE_CAPACITY) -> None:
+    def __init__(
+        self,
+        *,
+        capacity: int = DEFAULT_QUEUE_CAPACITY,
+        policy: QueueFullPolicy = "reject",
+    ) -> None:
         """Start with nobody waiting, and room for `capacity` in each band.
 
         Raises:
             ConfigurationError: if `capacity` is not at least one, which would
-                mean nothing could ever queue.
+                mean nothing could ever queue, or if `policy` is not one this
+                queue knows.
         """
+        if policy not in QUEUE_FULL_POLICIES:
+            known = ", ".join(repr(name) for name in QUEUE_FULL_POLICIES)
+            message = (
+                f"{policy!r} is not a queue full policy. The ones there are: {known}. "
+                f"'reject' refuses the new arrival, 'shed_lowest' drops the lowest "
+                f"priority waiter to make room for a higher priority one."
+            )
+            raise ConfigurationError(message)
+        self._policy: QueueFullPolicy = policy
         if capacity < 1:
             message = (
                 f"A queue band needs room for at least one waiter, got capacity={capacity}. "
@@ -204,6 +226,11 @@ class WaitQueue:
         is the number worth reporting later: at selection it is always zero,
         because selection takes the head.
 
+        Under the shed lowest policy a full band may displace a waiter from a
+        lower one instead of refusing, in which case that waiter's caller is
+        given `Shed` here rather than anywhere else. Doing it as part of the
+        insert is what makes the swap impossible to half finish.
+
         Raises:
             Shed: if this waiter's band is full and the work is sheddable,
                 meaning its priority is negative.
@@ -211,7 +238,7 @@ class WaitQueue:
                 sheddable.
         """
         band = self._bands.get(waiter.priority)
-        if band is not None and len(band) >= self._capacity:
+        if band is not None and len(band) >= self._capacity and not self._displace(waiter):
             refusal = _full(waiter, self._capacity)
             refusal.binding_dimension = waiter.refusal.binding_dimension
             refusal.explanation = waiter.refusal.explanation
@@ -276,6 +303,45 @@ class WaitQueue:
             else:
                 del self._bands[priority]
         return due
+
+    def _displace(self, arrival: Waiter) -> bool:
+        """Drop the lowest priority waiter for `arrival`, under the shed lowest policy.
+
+        The specification for this policy is that the lowest priority waiter
+        anywhere makes way for a higher priority arrival, and refuses when the
+        arrival is itself the lowest. Capacity being per band is what makes
+        that need stating precisely: dropping a waiter from a lower band frees
+        no slot in the arrival's own band, so the arrival is queued regardless
+        and its band may sit one over capacity for each waiter it has
+        displaced. No drop ever happens without a matching admission, so the
+        total number waiting never grows, which is the bound that matters.
+
+        The newest waiter in the lowest band goes, because it is the one that
+        has waited least.
+
+        Returns:
+            Whether room was made. False means the arrival is the lowest
+            priority there is, and it is refused instead.
+        """
+        if self._policy != "shed_lowest":
+            return False
+        lower = [priority for priority in self._bands if priority < arrival.priority]
+        if not lower:
+            return False
+        priority = min(lower)
+        band = self._bands[priority]
+        displaced = band.pop()
+        if not band:
+            del self._bands[priority]
+        if not displaced.future.done():
+            message = (
+                f"Dropped from the priority {priority} queue to make room for a priority "
+                f"{arrival.priority} request, because the queue is full and this work is "
+                f"the lowest priority in it. Nothing is wrong: the system is busy. Send it "
+                f"again later, or raise its priority if it should not be the first to go."
+            )
+            displaced.future.set_exception(Shed(message))
+        return True
 
     def earliest_deadline_ms(self) -> float | None:
         """When the first waiter gives up, or None if none of them ever will."""

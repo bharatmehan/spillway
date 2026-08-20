@@ -217,3 +217,64 @@ async def test_a_zero_priority_arrival_is_refused_rather_than_shed():
     with pytest.raises(AdmissionDenied) as raised:
         queue.push(waiting(priority=0))
     assert not isinstance(raised.value, Shed)
+
+
+async def test_shed_lowest_drops_the_lowest_priority_waiter_for_a_higher_arrival():
+    queue = WaitQueue(capacity=1, policy="shed_lowest")
+    batch = waiting(priority=-100)
+    queue.push(batch)
+    queue.push(waiting(priority=0))
+    urgent = waiting(priority=0)
+    queue.push(urgent)
+    assert batch.future.done()
+    with pytest.raises(Shed, match="lowest priority"):
+        await batch.future
+    assert queue.select() is not batch
+
+
+async def test_shed_lowest_refuses_an_arrival_that_is_itself_the_lowest():
+    queue = WaitQueue(capacity=1, policy="shed_lowest")
+    queue.push(waiting(priority=100))
+    queue.push(waiting(priority=0))
+    with pytest.raises(AdmissionDenied):
+        queue.push(waiting(priority=0))
+
+
+async def test_shed_lowest_never_grows_the_total_number_waiting():
+    # A band may sit over capacity by one for each waiter it displaced, which
+    # is what makes the total the bound that matters rather than the band.
+    queue = WaitQueue(capacity=1, policy="shed_lowest")
+    queue.push(waiting(priority=-100))
+    queue.push(waiting(priority=0))
+    before = queue.depth
+    queue.push(waiting(priority=0))
+    assert queue.depth == before
+
+
+async def test_shed_lowest_takes_the_newest_of_the_lowest_band():
+    # The one that has waited least, so waiting is never wasted.
+    queue = WaitQueue(capacity=2, policy="shed_lowest")
+    older, newer = waiting(priority=-100), waiting(priority=-100)
+    queue.push(older)
+    queue.push(newer)
+    queue.push(waiting(priority=0))
+    queue.push(waiting(priority=0))
+    queue.push(waiting(priority=0))
+    assert newer.future.done()
+    assert not older.future.done()
+    newer.future.exception()
+
+
+async def test_reject_is_the_default_because_silent_shedding_surprises_people():
+    queue = WaitQueue(capacity=1)
+    batch = waiting(priority=-100)
+    queue.push(batch)
+    queue.push(waiting(priority=0))
+    with pytest.raises(AdmissionDenied):
+        queue.push(waiting(priority=0))
+    assert not batch.future.done()
+
+
+def test_an_unknown_queue_full_policy_is_a_configuration_error():
+    with pytest.raises(ConfigurationError, match="not a queue full policy"):
+        WaitQueue(policy="drop_oldest")

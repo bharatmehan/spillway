@@ -27,6 +27,10 @@ version is below 0.1, any release may change anything.
 - Shedding, as one sentence: a negative priority arrival is dropped rather than queued when its
   own band is at capacity. It raises `Shed` rather than a plain refusal, so a caller can retry
   later instead of treating a busy system as an error.
+- A `shed_lowest` queue policy, alongside the default `reject`. A full band displaces the newest
+  waiter in the lowest band below it rather than refusing, and refuses when the arrival is itself
+  the lowest priority waiting. No waiter is ever dropped without another taking its place, so the
+  total number waiting never grows.
 
 ## 0.0.2 (2026-08-18)
 
