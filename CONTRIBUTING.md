@@ -49,6 +49,9 @@ House style, so that you are not surprised by a review comment:
   `feat(dimensions): add occupancy gauge`.
 - One concern per commit.
 - No en dashes and no em dashes anywhere. Use a comma, a colon, a full stop, or parentheses.
+- Time comes from the `Clock` protocol, never from a system clock directly. Anything time
+  dependent that is tested against real time produces a flaky test, and a flaky test eventually
+  gets deleted along with whatever it was defending.
 
 ## Licensing
 
