@@ -18,23 +18,36 @@ import pytest
 
 from spillway.core.cost import Cost
 from spillway.estimators.base import RequestContext
+from spillway.providers._template import Template
 from spillway.providers.anthropic import Anthropic
 from spillway.providers.base import Outcome, ProviderAdapter
 from spillway.providers.openai import OpenAI
 from spillway.providers.openai_compatible import OpenAICompatible
 from tests.providers._fixtures import every
 
-ADAPTERS = [Anthropic(), OpenAI(), OpenAICompatible()]
+# The template is in here deliberately. It is what a contributor starts from,
+# and a starting point that does not pass the contract is a trap. Its own
+# provider does not exist, so the checks that need a real client library skip
+# for it and everything else applies.
+ADAPTERS = [Anthropic(), OpenAI(), OpenAICompatible(), Template()]
 
 # Which captured fixtures describe the schema each adapter speaks. The generic
-# adapter speaks the same schema as the named one it shadows.
-SCHEMA_OF = {"anthropic": "anthropic", "openai": "openai", "openai_compatible": "openai"}
+# adapter speaks the same schema as the named one it shadows. The template
+# speaks none, having no provider behind it.
+SCHEMA_OF = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "openai_compatible": "openai",
+    "template": None,
+}
 
 CLIENTS = {"anthropic": "AsyncAnthropic", "openai": "AsyncOpenAI"}
 
 
 def _client_for(adapter):
     """Build a real client of the kind this adapter recognises."""
+    if adapter.client_module not in CLIENTS:
+        pytest.skip(f"no client library ships for {adapter.name!r}")
     module = pytest.importorskip(adapter.client_module)
     return getattr(module, CLIENTS[adapter.client_module])(api_key="not-a-real-key")
 
@@ -49,6 +62,12 @@ def _resolve(client, path):
 
 def _ids(adapters):
     return [a.name for a in adapters]
+
+
+def _fixtures(adapter, prefix):
+    """The captured fixtures for this adapter's schema, if it has one."""
+    schema = SCHEMA_OF[adapter.name]
+    return [] if schema is None else every(schema, prefix)
 
 
 @pytest.mark.parametrize("adapter", ADAPTERS, ids=_ids(ADAPTERS))
@@ -135,7 +154,7 @@ def test_adjustment_never_reserves_less_than_it_was_given(adapter):
 
 @pytest.mark.parametrize("adapter", ADAPTERS, ids=_ids(ADAPTERS))
 def test_usage_reads_every_captured_response(adapter):
-    for name, fixture in every(SCHEMA_OF[adapter.name], "response-"):
+    for name, fixture in _fixtures(adapter, "response-"):
         cost = adapter.usage_from(fixture["body"])
         assert cost.input_tokens >= 0, name
         assert cost.output_tokens >= 0, name
@@ -144,7 +163,7 @@ def test_usage_reads_every_captured_response(adapter):
 
 @pytest.mark.parametrize("adapter", ADAPTERS, ids=_ids(ADAPTERS))
 def test_reading_usage_twice_gives_the_same_answer(adapter):
-    for name, fixture in every(SCHEMA_OF[adapter.name], "response-"):
+    for name, fixture in _fixtures(adapter, "response-"):
         assert adapter.usage_from(fixture["body"]) == adapter.usage_from(fixture["body"]), name
 
 
@@ -153,7 +172,7 @@ def test_extra_categories_are_never_folded_into_the_totals(adapter):
     # Cached reads sit outside the input total and reasoning tokens sit inside
     # the output one. Either being added again counts the same tokens twice on
     # every request that has them, which quietly shrinks the real limit.
-    for name, fixture in every(SCHEMA_OF[adapter.name], "response-"):
+    for name, fixture in _fixtures(adapter, "response-"):
         cost = adapter.usage_from(fixture["body"])
         assert cost.total_tokens == cost.input_tokens + cost.output_tokens, name
 
@@ -203,7 +222,7 @@ def test_silence_from_a_provider_is_not_an_empty_budget(adapter):
 
 @pytest.mark.parametrize("adapter", ADAPTERS, ids=_ids(ADAPTERS))
 def test_reported_state_is_internally_consistent(adapter):
-    for name, fixture in every(SCHEMA_OF[adapter.name], "headers-"):
+    for name, fixture in _fixtures(adapter, "headers-"):
         state = adapter.parse_headers(fixture["headers"])
         if state is None:
             continue
