@@ -1,0 +1,13 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/errors", "read_on": "2026-08-22" },
+  "status": 500,
+  "exception": "InternalServerError",
+  "headers": {},
+  "body": {
+    "type": "error",
+    "error": { "type": "api_error", "message": "An unexpected error occurred internally." },
+    "request_id": "req_011CQjmRUJTVsBscDkgxLXFe"
+  },
+  "expected_outcome": "overloaded",
+  "expected_retry_after": null
+}

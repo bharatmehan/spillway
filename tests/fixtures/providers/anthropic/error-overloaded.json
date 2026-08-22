@@ -1,0 +1,14 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/errors", "read_on": "2026-08-22" },
+  "note": "529, not 503, and it has its own exception class. This is the one that should make a controller back off.",
+  "status": 529,
+  "exception": "OverloadedError",
+  "headers": {},
+  "body": {
+    "type": "error",
+    "error": { "type": "overloaded_error", "message": "Overloaded" },
+    "request_id": "req_011CQjmRUJTVsBscDkgxLXFd"
+  },
+  "expected_outcome": "overloaded",
+  "expected_retry_after": null
+}

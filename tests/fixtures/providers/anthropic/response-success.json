@@ -1,0 +1,25 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/messages", "read_on": "2026-08-22" },
+  "status": 200,
+  "body": {
+    "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-5",
+    "content": [{ "type": "text", "text": "Here is the summary." }],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 2095,
+      "output_tokens": 503,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "expected_cost": {
+    "input_tokens": 2095,
+    "output_tokens": 503,
+    "requests": 1,
+    "extra": { "cached_input": 0 }
+  }
+}

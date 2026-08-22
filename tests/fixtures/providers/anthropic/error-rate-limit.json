@@ -1,0 +1,16 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/errors", "read_on": "2026-08-22" },
+  "status": 429,
+  "exception": "RateLimitError",
+  "headers": { "retry-after": "12" },
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "rate_limit_error",
+      "message": "Number of request tokens has exceeded your per-minute rate limit."
+    },
+    "request_id": "req_011CQjmRUJTVsBscDkgxLXFc"
+  },
+  "expected_outcome": "rate_limited",
+  "expected_retry_after": 12.0
+}

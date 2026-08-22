@@ -1,0 +1,16 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/messages", "read_on": "2026-08-22" },
+  "note": "Every parameter is keyword only. There is no positional form to miss.",
+  "endpoint": "messages.create",
+  "kwargs": {
+    "model": "claude-sonnet-5",
+    "max_tokens": 1024,
+    "messages": [
+      { "role": "user", "content": "Summarise this document in three sentences." }
+    ]
+  },
+  "expected_context": {
+    "model": "claude-sonnet-5",
+    "max_tokens": 1024
+  }
+}

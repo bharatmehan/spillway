@@ -1,0 +1,14 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/errors", "read_on": "2026-08-22" },
+  "note": "Must never be classified as overload. A malformed request read as congestion makes the limiter collapse for a reason no amount of backing off can fix.",
+  "status": 400,
+  "exception": "BadRequestError",
+  "headers": {},
+  "body": {
+    "type": "error",
+    "error": { "type": "invalid_request_error", "message": "max_tokens: Field required" },
+    "request_id": "req_011CQjmRUJTVsBscDkgxLXFf"
+  },
+  "expected_outcome": "error",
+  "expected_retry_after": null
+}

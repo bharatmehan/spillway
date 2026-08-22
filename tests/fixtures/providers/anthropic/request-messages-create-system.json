@@ -1,0 +1,17 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/messages", "read_on": "2026-08-22" },
+  "note": "The system prompt is a separate parameter, not a message, so counting input from messages alone would miss it.",
+  "endpoint": "messages.create",
+  "kwargs": {
+    "model": "claude-sonnet-5",
+    "max_tokens": 2048,
+    "system": "You are a careful summariser. Answer in British English.",
+    "messages": [
+      { "role": "user", "content": [{ "type": "text", "text": "Summarise the attached report." }] }
+    ]
+  },
+  "expected_context": {
+    "model": "claude-sonnet-5",
+    "max_tokens": 2048
+  }
+}

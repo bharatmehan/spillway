@@ -1,0 +1,22 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/rate-limits", "read_on": "2026-08-22" },
+  "note": "Reset values are RFC 3339 timestamps, not durations and not epoch seconds. The remaining counts are rounded to the nearest thousand.",
+  "headers": {
+    "anthropic-ratelimit-requests-limit": "1000",
+    "anthropic-ratelimit-requests-remaining": "998",
+    "anthropic-ratelimit-requests-reset": "2026-08-22T09:31:00Z",
+    "anthropic-ratelimit-input-tokens-limit": "2000000",
+    "anthropic-ratelimit-input-tokens-remaining": "1907000",
+    "anthropic-ratelimit-input-tokens-reset": "2026-08-22T09:31:00Z",
+    "anthropic-ratelimit-output-tokens-limit": "400000",
+    "anthropic-ratelimit-output-tokens-remaining": "396000",
+    "anthropic-ratelimit-output-tokens-reset": "2026-08-22T09:31:00Z",
+    "anthropic-ratelimit-tokens-limit": "2400000",
+    "anthropic-ratelimit-tokens-remaining": "2303000",
+    "anthropic-ratelimit-tokens-reset": "2026-08-22T09:31:00Z"
+  },
+  "expected_state": {
+    "limits": { "rpm": 1000, "input_tpm": 2000000, "output_tpm": 400000 },
+    "remaining": { "rpm": 998, "input_tpm": 1907000, "output_tpm": 396000 }
+  }
+}

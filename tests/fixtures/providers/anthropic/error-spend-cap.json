@@ -1,0 +1,18 @@
+{
+  "source": { "url": "https://platform.claude.com/docs/en/api/rate-limits", "read_on": "2026-08-22" },
+  "note": "Same error type as a rate limit and the same status, but no retry-after and waiting does not help. Told apart by error.details.error_code. Classified as an error rather than as congestion, because backing off cannot fix a spend cap and a controller that treats it as congestion collapses the limit for a condition it can never clear.",
+  "status": 429,
+  "exception": "RateLimitError",
+  "headers": {},
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "rate_limit_error",
+      "message": "You have reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on your organization's API tier. You will regain access on 2026-09-01 at 00:00 UTC.",
+      "details": { "error_code": "enforced_spend_limit_reached" }
+    },
+    "request_id": "req_018EeWyXxfu5pfWkrYcMdjWG"
+  },
+  "expected_outcome": "error",
+  "expected_retry_after": null
+}
