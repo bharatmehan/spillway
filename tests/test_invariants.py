@@ -378,6 +378,11 @@ def test_inv_8_every_waiter_is_queued_or_finished(operations):
 SAMPLES = st.lists(st.integers(min_value=0, max_value=100_000), min_size=1, max_size=200)
 QUANTILES = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
 
+# The relative tolerance the quantile snaps an interpolation to a whole token
+# with. It is here rather than imported because the test should fail if that
+# number moves, which is the whole point of pinning it in two places.
+SNAP_TOLERANCE = Fraction(1, 10**9)
+
 
 def _exact_quantile(samples, q):
     """The interpolated quantile with no floating point error at all.
@@ -420,9 +425,14 @@ def test_inv_9_a_quantile_is_never_below_the_point_it_was_asked_for(samples, q):
     # than the quantile every time one lands between two samples, which is most
     # of the time. The slack below is the documented snap: an interpolation
     # within a hair of a whole token is that token, not the one above it.
+    #
+    # The snap is a relative tolerance, so the slack has to be relative too. A
+    # flat one agrees with it at one magnitude only, and above that the test
+    # asserts a tighter bound than the code ever promised: with samples around
+    # 1000 the two coincide exactly, and anything larger fails on a hair.
     reserved = Distribution.empirical(samples).quantile(q)
     exact = _exact_quantile(samples, q)
-    assert reserved >= exact - Fraction(1, 1_000_000)
+    assert reserved >= exact * (1 - SNAP_TOLERANCE)
     assert reserved < exact + 1
 
 
