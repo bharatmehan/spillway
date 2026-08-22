@@ -17,13 +17,12 @@ passed and what the provider returned, and it does arithmetic.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
 from spillway.core.cost import Cost
-from spillway.dimensions.base import Dimension
 from spillway.estimators.base import RequestContext
 
 
@@ -136,8 +135,14 @@ class ProviderAdapter(Protocol):
     untouched, which is the safe direction to fail: something the adapter has
     never heard of behaves exactly as it did before.
 
+    **An adapter has no opinion about what your limits are.** It encodes how a
+    provider counts, never how much you are allowed, because a limit belongs to
+    an account rather than to a provider and the true figure lives in that
+    account's own console. The caller names their limits and this describes how
+    to charge against them.
+
     Attributes:
-        name: What this provider is called, in errors and in the limits table.
+        name: What this provider is called, in errors and in messages.
         client_module: The top level module of a client speaking this protocol.
         official_hosts: Base URLs the published limits apply to. A client
             pointed anywhere else speaks the same protocol against a different
@@ -151,7 +156,6 @@ class ProviderAdapter(Protocol):
     Example:
         A minimal adapter for a service that meters requests and nothing else.
 
-        >>> from spillway.dimensions.rate import Rate
         >>> class Tiny:
         ...     name = "tiny"
         ...     client_module = "tinyai"
@@ -175,9 +179,6 @@ class ProviderAdapter(Protocol):
         ...
         ...     def retry_after(self, exc, headers):
         ...         return None
-        ...
-        ...     def default_dimensions(self, tier):
-        ...         return [Rate("rpm", limit=60)]
         ...
         ...     def charges_max_tokens(self):
         ...         return False
@@ -260,20 +261,6 @@ class ProviderAdapter(Protocol):
             Seconds, never negative, or None when the provider did not say. A
             refusal that will not clear on its own returns None rather than
             zero, because zero would invite an immediate retry.
-        """
-        ...
-
-    def default_dimensions(self, tier: str | int | None) -> Sequence[Dimension]:
-        """Build the limits this provider publishes for `tier`.
-
-        Args:
-            tier: Whatever the provider calls its tiers, which is a name for
-                one and a number for another. None means no limits are known,
-                and the result is empty rather than guessed.
-
-        Raises:
-            ConfigurationError: if `tier` is not one this provider has, naming
-                the ones it does.
         """
         ...
 
