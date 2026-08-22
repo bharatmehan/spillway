@@ -47,10 +47,10 @@ class OpenAICompatible:
         True
     """
 
-    name = "openai_compatible"
-    client_module = "openai"
-    official_hosts = ()
-    endpoints = (
+    name: str = "openai_compatible"
+    client_module: str = "openai"
+    official_hosts: tuple[str, ...] = ()
+    endpoints: tuple[str, ...] = (
         "chat.completions.create",
         "chat.completions.parse",
         "responses.create",

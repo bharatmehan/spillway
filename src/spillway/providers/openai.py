@@ -158,10 +158,10 @@ class OpenAI:
         4096
     """
 
-    name = "openai"
-    client_module = "openai"
-    official_hosts = ("api.openai.com",)
-    endpoints = (
+    name: str = "openai"
+    client_module: str = "openai"
+    official_hosts: tuple[str, ...] = ("api.openai.com",)
+    endpoints: tuple[str, ...] = (
         "chat.completions.create",
         "chat.completions.parse",
         "responses.create",

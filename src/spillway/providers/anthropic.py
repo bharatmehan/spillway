@@ -70,10 +70,10 @@ class Anthropic:
         Cost(input_tokens=50, output_tokens=218, requests=1, extra={'cached_input': 200000})
     """
 
-    name = "anthropic"
-    client_module = "anthropic"
-    official_hosts = ("api.anthropic.com",)
-    endpoints = (
+    name: str = "anthropic"
+    client_module: str = "anthropic"
+    official_hosts: tuple[str, ...] = ("api.anthropic.com",)
+    endpoints: tuple[str, ...] = (
         "messages.create",
         "messages.parse",
         "beta.messages.create",
