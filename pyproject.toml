@@ -50,9 +50,17 @@ build-backend = "uv_build"
 required-version = ">=0.12.5,<0.13"
 
 [dependency-groups]
+# The provider client libraries are here rather than in an optional extra because
+# nothing in this package imports either of them. A client is recognised from its
+# class, its methods are reached by name, and its responses are read for the
+# attributes they carry. They are installed for the tests, which assert that the
+# methods this library claims to instrument still exist and still take keyword
+# arguments, since that is the one kind of breakage nothing else would notice.
 dev = [
+    "anthropic>=1.0.0",
     "hypothesis>=6.100",
     "mypy>=1.18",
+    "openai>=3.3.1",
     "pytest>=8.4",
     "pytest-asyncio>=1.0",
     "ruff>=0.16",
