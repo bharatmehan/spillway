@@ -1,0 +1,31 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/api-reference/responses", "read_on": "2026-08-22" },
+  "note": "Reasoning tokens are reported inside the output total, not beside it, so they are recorded as a category and never added again.",
+  "status": 200,
+  "body": {
+    "id": "resp_67ccd2bed1ec8190b14f964abc054267",
+    "object": "response",
+    "created_at": 1771753000,
+    "model": "gpt-5",
+    "output": [
+      {
+        "type": "message",
+        "role": "assistant",
+        "content": [{ "type": "output_text", "text": "Here is the summary." }]
+      }
+    ],
+    "usage": {
+      "input_tokens": 36,
+      "input_tokens_details": { "cached_tokens": 24 },
+      "output_tokens": 87,
+      "output_tokens_details": { "reasoning_tokens": 64 },
+      "total_tokens": 123
+    }
+  },
+  "expected_cost": {
+    "input_tokens": 36,
+    "output_tokens": 87,
+    "requests": 1,
+    "extra": { "cached_input": 24, "reasoning": 64 }
+  }
+}

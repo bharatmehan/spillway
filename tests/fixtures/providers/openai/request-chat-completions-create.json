@@ -1,0 +1,10 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/api-reference/chat", "read_on": "2026-08-22" },
+  "endpoint": "chat.completions.create",
+  "kwargs": {
+    "model": "gpt-5",
+    "messages": [{ "role": "user", "content": "Summarise this document in three sentences." }],
+    "max_completion_tokens": 1024
+  },
+  "expected_context": { "model": "gpt-5", "max_tokens": 1024 }
+}

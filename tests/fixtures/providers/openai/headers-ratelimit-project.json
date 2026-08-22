@@ -1,0 +1,9 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/guides/rate-limits", "read_on": "2026-08-22" },
+  "note": "A project scoped token limit is reported alongside the account one. It is read but not yet enforced, because a dimension keyed by project needs the key to carry the project.",
+  "headers": {
+    "x-ratelimit-limit-project-tokens": "60000",
+    "x-ratelimit-remaining-project-tokens": "57000",
+    "x-ratelimit-reset-project-tokens": "3s"
+  }
+}

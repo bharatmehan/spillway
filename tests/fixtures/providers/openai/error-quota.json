@@ -1,0 +1,17 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/guides/error-codes", "read_on": "2026-08-22" },
+  "note": "Same status as a rate limit and the same exception class, told apart by the code. Waiting never clears it, so it is an error rather than congestion.",
+  "status": 429,
+  "exception": "RateLimitError",
+  "headers": {},
+  "body": {
+    "error": {
+      "message": "You exceeded your current quota, please check your plan and billing details.",
+      "type": "insufficient_quota",
+      "param": null,
+      "code": "insufficient_quota"
+    }
+  },
+  "expected_outcome": "error",
+  "expected_retry_after": null
+}

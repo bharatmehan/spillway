@@ -1,0 +1,16 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/guides/error-codes", "read_on": "2026-08-22" },
+  "status": 500,
+  "exception": "InternalServerError",
+  "headers": {},
+  "body": {
+    "error": {
+      "message": "The server had an error while processing your request. Sorry about that!",
+      "type": "server_error",
+      "param": null,
+      "code": null
+    }
+  },
+  "expected_outcome": "overloaded",
+  "expected_retry_after": null
+}

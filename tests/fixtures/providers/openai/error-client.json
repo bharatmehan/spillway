@@ -1,0 +1,17 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/guides/error-codes", "read_on": "2026-08-22" },
+  "note": "Must never be classified as overload. A malformed request read as congestion makes the limiter collapse for a reason no amount of backing off can fix.",
+  "status": 400,
+  "exception": "BadRequestError",
+  "headers": {},
+  "body": {
+    "error": {
+      "message": "Unrecognized request argument supplied: spillway_scope",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": null
+    }
+  },
+  "expected_outcome": "error",
+  "expected_retry_after": null
+}

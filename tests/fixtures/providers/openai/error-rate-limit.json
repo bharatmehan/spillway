@@ -1,0 +1,16 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/guides/rate-limits", "read_on": "2026-08-22" },
+  "status": 429,
+  "exception": "RateLimitError",
+  "headers": { "retry-after": "56" },
+  "body": {
+    "error": {
+      "message": "Rate limit reached for gpt-5 on tokens per min (TPM): Limit 150000, Used 149984, Requested 100. Please try again in 6ms.",
+      "type": "tokens",
+      "param": null,
+      "code": "rate_limit_exceeded"
+    }
+  },
+  "expected_outcome": "rate_limited",
+  "expected_retry_after": 56.0
+}

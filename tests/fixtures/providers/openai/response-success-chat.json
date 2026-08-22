@@ -1,0 +1,31 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/api-reference/chat", "read_on": "2026-08-22" },
+  "note": "This endpoint names usage prompt and completion. The other endpoint names the same two numbers input and output, so one provider needs both readers.",
+  "status": 200,
+  "body": {
+    "id": "chatcmpl-B9MHDbslfkBeAs8l4bebGdFOJ6PeG",
+    "object": "chat.completion",
+    "created": 1771753000,
+    "model": "gpt-5",
+    "choices": [
+      {
+        "index": 0,
+        "message": { "role": "assistant", "content": "Here is the summary." },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 19,
+      "completion_tokens": 10,
+      "total_tokens": 29,
+      "prompt_tokens_details": { "cached_tokens": 0 },
+      "completion_tokens_details": { "reasoning_tokens": 0 }
+    }
+  },
+  "expected_cost": {
+    "input_tokens": 19,
+    "output_tokens": 10,
+    "requests": 1,
+    "extra": { "cached_input": 0, "reasoning": 0 }
+  }
+}

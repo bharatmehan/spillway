@@ -1,0 +1,11 @@
+{
+  "source": { "url": "https://developers.openai.com/api/docs/api-reference/responses", "read_on": "2026-08-22" },
+  "note": "A different endpoint in the same library names all three of the things that matter differently: input rather than messages, and a different maximum. This is why reading the request is the adapter's job and not the caller's.",
+  "endpoint": "responses.create",
+  "kwargs": {
+    "model": "gpt-5",
+    "input": "Summarise this document in three sentences.",
+    "max_output_tokens": 2048
+  },
+  "expected_context": { "model": "gpt-5", "max_tokens": 2048 }
+}
