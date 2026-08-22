@@ -20,6 +20,8 @@ from spillway.core.lease import Lease, LeaseState
 from spillway.core.queue import DEFAULT_QUEUE_CAPACITY, QueueFullPolicy, Waiter, WaitQueue
 from spillway.core.scope import Priority, Scope
 from spillway.dimensions.base import Dimension, claim_key
+from spillway.dimensions.concurrency import Concurrency
+from spillway.dimensions.rate import Rate
 from spillway.estimators.base import Estimator, Observation, RequestContext
 from spillway.estimators.max_tokens import MaxTokensEstimator
 from spillway.observability.explain import AdmissionExplanation
@@ -46,6 +48,76 @@ seconds is long enough to ride out an ordinary burst and short enough that a
 request stuck behind something pathological still returns an error somebody can
 read. Pass `default_timeout=None` to wait for as long as it takes.
 """
+
+
+_SECONDS_PER_DAY = 86_400.0
+
+NAMED_LIMITS = ("rpm", "rpd", "tpm", "input_tpm", "output_tpm", "concurrency")
+"""The limits that can be named directly rather than built as dimensions.
+
+These are the shapes providers actually publish, and the names are the ones
+they publish them under, so a figure copied off a provider's own page goes in
+without translation. Anything else is a `Dimension` passed to `dimensions`,
+which is what these are sugar for.
+"""
+
+
+def dimensions_from(
+    *,
+    rpm: float | None = None,
+    rpd: float | None = None,
+    tpm: float | None = None,
+    input_tpm: float | None = None,
+    output_tpm: float | None = None,
+    concurrency: int | None = None,
+) -> tuple[Dimension, ...]:
+    """Turn named limits into the dimensions that enforce them.
+
+    Pass the limits your provider actually gives you and leave the rest alone.
+    A provider that meters input and output on one combined bucket gives you a
+    `tpm` and nothing else; one that meters them apart gives you `input_tpm`
+    and `output_tpm`. Nothing here assumes which, because that is a fact about
+    a provider and this function is about your numbers.
+
+    This library ships no limit figures of its own. Yours are on your
+    provider's own limits page, and they are the only ones that are true for
+    your account.
+
+    Args:
+        rpm: Requests per minute.
+        rpd: Requests per day.
+        tpm: Tokens per minute, counting input and output together.
+        input_tpm: Input tokens per minute, when metered on their own.
+        output_tpm: Output tokens per minute, when metered on their own.
+        concurrency: How many requests may be in flight at once. Not usually
+            published, and worth setting anyway: it is the limit that protects
+            the provider's latency rather than its accounting.
+
+    Example:
+        >>> found = dimensions_from(rpm=1_000, input_tpm=2_000_000, output_tpm=400_000)
+        >>> [d.name for d in found]
+        ['rpm', 'input_tpm', 'output_tpm']
+        >>> dimensions_from(tpm=150_000)[0].limit
+        150000.0
+
+        Naming nothing is valid, and means observe without limiting.
+
+        >>> dimensions_from()
+        ()
+    """
+    built: list[Dimension] = []
+    for name, limit, window in (
+        ("rpm", rpm, 60.0),
+        ("rpd", rpd, _SECONDS_PER_DAY),
+        ("tpm", tpm, 60.0),
+        ("input_tpm", input_tpm, 60.0),
+        ("output_tpm", output_tpm, 60.0),
+    ):
+        if limit is not None:
+            built.append(Rate(name, limit=limit, window=window))
+    if concurrency is not None:
+        built.append(Concurrency("generations", limit=concurrency))
+    return tuple(built)
 
 
 @dataclass(frozen=True)
