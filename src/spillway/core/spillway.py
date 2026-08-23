@@ -11,6 +11,7 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
+from typing import Literal
 
 from spillway.core.clock import Clock, MonotonicClock
 from spillway.core.cost import Cost, Estimate
@@ -910,8 +911,12 @@ class AdmitContext:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         traceback: TracebackType | None,
-    ) -> bool:
+    ) -> Literal[False]:
         """Give the capacity back, whichever way the block ended.
+
+        Never suppresses. The annotation says `False` rather than `bool` so
+        that a type checker knows a `return` inside the block is reached, which
+        it cannot know from `bool` alone.
 
         Four endings, and each one has a different right answer.
 
