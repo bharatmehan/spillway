@@ -11,23 +11,39 @@ Output length is predicted rather than guessed at. An estimator that has watched
 a route reserves what most of its requests come in under, instead of the maximum
 the caller was willing to allow, which is usually many times larger.
 
-    from spillway import Concurrency, Rate, Spillway
+Two lines where the client is built, and every call site is untouched:
 
-    limiter = Spillway(
-        dimensions=[
-            Rate("rpm", limit=1_000),
-            Rate("input_tpm", limit=400_000),
-            Rate("output_tpm", limit=80_000),
-            Concurrency("generations", limit=64),
-        ],
-        estimator=QuantileEstimator(route_key=lambda ctx: ctx.tags.get("task")),
-    )
+    from anthropic import AsyncAnthropic
+    from spillway import Spillway
 
-    async def call(prompt: str) -> str:
-        async with limiter.admit(prompt=prompt, max_tokens=1_024, tags={"task": "chat"}) as lease:
-            response = await your_client.create(prompt=prompt)
-            lease.settle(input=response.usage.input, output=response.usage.output)
-            return response.text
+    client = Spillway.instrument(AsyncAnthropic(), rpm=1_000, input_tpm=2_000_000)
+
+    reply = await client.messages.create(model=..., messages=..., max_tokens=1_024)
+
+The limits are yours. This library ships none of its own, because a rate limit
+belongs to an account rather than to a provider and the true figure lives in
+your provider's own console. Name the ones it gives you: `rpm`, `rpd`, `tpm`,
+`input_tpm`, `output_tpm`, `concurrency`.
+
+Naming none of them admits everything and records what the traffic really costs,
+which is the intended first step:
+
+    client = Spillway.instrument(AsyncAnthropic())
+    ...
+    Spillway.of(client).snapshot()
+
+Scope and priority arrive from the surrounding code rather than from every call
+site, which is what makes limiting per tenant realistic:
+
+    with scope_context(f"tenant:{tenant}", priority=Priority.INTERACTIVE):
+        ...
+
+And underneath all of it, the admission itself, for a provider with no adapter
+or work that is not an SDK call:
+
+    async with limiter.admit(prompt=prompt, max_tokens=1_024) as lease:
+        response = await your_client.create(prompt=prompt)
+        lease.settle(input=response.usage.input, output=response.usage.output)
 
 This list is curated and small. Anything not named here is reached through an
 explicit submodule import, so what is supported is what an editor offers.
