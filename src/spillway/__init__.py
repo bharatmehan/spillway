@@ -35,6 +35,9 @@ explicit submodule import, so what is supported is what an editor offers.
 
 from importlib.metadata import PackageNotFoundError, version
 
+# Imported rather than left to a submodule import, so that `spillway.providers`
+# resolves for anyone who reached the package first, which is everyone.
+from spillway import providers
 from spillway.core.cost import Cost, Distribution, Estimate
 from spillway.core.errors import (
     AdmissionDenied,
@@ -54,6 +57,7 @@ from spillway.estimators.callable import CallableEstimator
 from spillway.estimators.max_tokens import MaxTokensEstimator
 from spillway.estimators.quantile import QuantileEstimator
 from spillway.estimators.static import StaticEstimator
+from spillway.integrations.context import scope_context
 
 try:
     __version__ = version("spillway")
@@ -83,4 +87,6 @@ __all__ = [
     "SpillwayError",
     "StaticEstimator",
     "__version__",
+    "providers",
+    "scope_context",
 ]

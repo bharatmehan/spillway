@@ -35,6 +35,10 @@ EXPECTED = [
     "SpillwayError",
     "StaticEstimator",
     "__version__",
+    # A submodule rather than a name, so that `from spillway import providers`
+    # works for anyone who reached the package first, which is everyone.
+    "providers",
+    "scope_context",
 ]
 
 
