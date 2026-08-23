@@ -24,6 +24,7 @@ from spillway.dimensions.concurrency import Concurrency
 from spillway.dimensions.rate import Rate
 from spillway.estimators.base import Estimator, Observation, RequestContext
 from spillway.estimators.max_tokens import MaxTokensEstimator
+from spillway.estimators.quantile import QuantileEstimator
 from spillway.observability.explain import AdmissionExplanation
 from spillway.providers.base import ProviderAdapter
 from spillway.stores.base import Claim, DuplexStore, Utilisation
@@ -305,6 +306,92 @@ class Spillway:
         self._provider = _adapter_for(provider)
         self._queue = WaitQueue(capacity=queue_capacity, policy=queue_full_policy)
         self._dispatcher = Dispatcher(limiter=self, queue=self._queue, clock=self._clock)
+
+    @classmethod
+    def for_provider(
+        cls,
+        provider: ProviderAdapter | str,
+        *,
+        rpm: float | None = None,
+        rpd: float | None = None,
+        tpm: float | None = None,
+        input_tpm: float | None = None,
+        output_tpm: float | None = None,
+        concurrency: int | None = None,
+        dimensions: Sequence[Dimension] = (),
+        store: DuplexStore | None = None,
+        clock: Clock | None = None,
+        scope: str | Scope | None = None,
+        estimator: Estimator | None = None,
+        default_timeout: float | None = DEFAULT_TIMEOUT_S,
+        queue_capacity: int = DEFAULT_QUEUE_CAPACITY,
+        queue_full_policy: QueueFullPolicy = "reject",
+    ) -> Spillway:
+        """Build a limiter that knows how one provider counts.
+
+        The same as calling `Spillway(provider=...)`, with one difference that
+        is worth the separate name: it defaults to the estimator that learns
+        what each route really produces, rather than to the one that reserves
+        whatever maximum the caller allowed.
+
+        That default is safe from cold. Below its sample threshold the learning
+        estimator defers to the requested maximum, so a fresh process behaves
+        exactly like the conservative one and improves as it watches. It is not
+        the default on `Spillway()` itself because that would change the
+        behaviour of every limiter built before this existed.
+
+        Args:
+            provider: An adapter, or the name of one that ships.
+            rpm: Requests per minute, if your provider gives you one.
+            rpd: Requests per day.
+            tpm: Tokens per minute, counting input and output together.
+            input_tpm: Input tokens per minute, when metered on their own.
+            output_tpm: Output tokens per minute, when metered on their own.
+            concurrency: How many requests may be in flight at once.
+            dimensions: Any limit the named ones cannot express.
+            store: Where reservations are recorded.
+            clock: Where time comes from.
+            scope: The scope used when a caller names none.
+            estimator: Overrides the learning default.
+            default_timeout: How long to wait for capacity.
+            queue_capacity: How many requests may wait in each priority band.
+            queue_full_policy: What a full band does with a new arrival.
+
+        Raises:
+            ConfigurationError: if the provider is not one that ships, naming
+                the ones that do.
+
+        Example:
+            >>> limiter = Spillway.for_provider("anthropic", rpm=1_000)
+            >>> limiter.provider.name
+            'anthropic'
+            >>> [dimension.name for dimension in limiter.dimensions]
+            ['rpm']
+
+            Naming no limits is valid and means observe without limiting,
+            which is the intended first step: watch real traffic, read the
+            snapshot, then set a limit you can defend.
+
+            >>> Spillway.for_provider("openai").dimensions
+            ()
+        """
+        return cls(
+            dimensions=dimensions,
+            store=store,
+            clock=clock,
+            scope=scope,
+            estimator=estimator if estimator is not None else QuantileEstimator(),
+            provider=provider,
+            default_timeout=default_timeout,
+            queue_capacity=queue_capacity,
+            queue_full_policy=queue_full_policy,
+            rpm=rpm,
+            rpd=rpd,
+            tpm=tpm,
+            input_tpm=input_tpm,
+            output_tpm=output_tpm,
+            concurrency=concurrency,
+        )
 
     def __repr__(self) -> str:
         """Show what is being enforced."""
