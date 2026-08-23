@@ -12,7 +12,11 @@ needs an address something can be pointed at. One handler, two consumers.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
 import httpx2
 
@@ -201,3 +205,43 @@ class MockOpenAI(MockProvider):
                 }
             },
         )
+
+
+@contextmanager
+def serving(provider: MockProvider) -> Iterator[str]:
+    """Run `provider` on a real socket, and yield the address to point at.
+
+    The transport is enough for everything in this repository, because the
+    client libraries let one be injected. An example cannot do that: it has to
+    be a script somebody can run, so it takes an address instead. Same handlers,
+    two ways in.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("content-length", 0))
+            body = self.rfile.read(length)
+            answer = provider._handle(
+                httpx2.Request("POST", f"http://localhost{self.path}", content=body)
+            )
+            payload = answer.content
+            self.send_response(answer.status_code)
+            for name, value in answer.headers.items():
+                if name.lower() not in ("content-length", "transfer-encoding"):
+                    self.send_header(name, value)
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_: object) -> None:
+            """Stay quiet. A test that passes should print nothing."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

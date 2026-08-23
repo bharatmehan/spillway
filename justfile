@@ -27,5 +27,9 @@ test-fast:
 # The gate. If this passes locally, continuous integration passes.
 check: lint types test-fast
 
+# Run one numbered example against a mock provider, as its test does.
+example number:
+    uv run pytest tests/examples/test_example_{{number}}.py -m integration -q
+
 build:
     uv build
