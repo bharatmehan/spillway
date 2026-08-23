@@ -3,6 +3,95 @@
 Notable changes to this project, newest first. This project uses semantic versioning. While the
 version is below 0.1, any release may change anything.
 
+## 0.0.5 (2026-08-23)
+
+### Added
+
+- `Spillway.instrument(client)`, which returns a copy of a provider's own client whose completion
+  methods admit before the call and settle after it. Two lines where the client is built, and
+  every call site untouched. It is the same verb on the class and on an instance: reached through
+  the class it builds the limiter, reached through an instance it uses the one you built, which
+  is what to do the moment a quota is shared by more than one client or more than one process.
+- The instrumented client is genuinely an instance of the class handed in rather than a proxy
+  standing in for one, so editor completion, `isinstance` and strict type checking all keep
+  working because they are the original client's. A type checking test asserts it, because a
+  wrapper that turned a typed client into an untyped one would deserve to be removed.
+- The client passed in is left alone. Instrumenting works on a copy and the two share one
+  connection pool, so an instrumented client and a bare one are independent objects and neither
+  costs a second pool.
+- `Spillway.of(client)`, which returns the limiter behind an instrumented client. How a health
+  check reaches a snapshot without the application threading a limiter around beside every client
+  it holds, and also the guard: instrumenting an already instrumented client raises rather than
+  stacking two limiters over one quota and quietly halving the effective limit.
+- Provider adapters for Anthropic and OpenAI, and a generic adapter for anything speaking the
+  OpenAI protocol against another service. An adapter encodes how a provider counts: which
+  argument carries the model, the prompt and the requested maximum on each endpoint, which usage
+  fields to read and which are separate categories, whether the requested maximum is charged at
+  admission, which failures are congestion and which are not, and the header names and reset
+  formats. Every fact in one has a captured fixture behind it.
+- A shared conformance suite that runs identically against every adapter, including one written
+  outside this repository. Three of its assertions exist to catch failures that are otherwise
+  silent: every declared endpoint still exists on the installed client library, still takes
+  keyword arguments only, and does not delegate to another declared endpoint. A renamed method
+  would otherwise simply stop being instrumented, with nothing raising and every other test still
+  passing.
+- Named limits, on the limiter and on `instrument`: `rpm`, `rpd`, `tpm`, `input_tpm`,
+  `output_tpm` and `concurrency`. Pass the ones your provider gives you. A provider metering
+  input and output together gives you a `tpm`, one metering them apart gives you two, and both
+  are the same call with different arguments named.
+- `scope_context`, which applies a scope, a priority and tags to every call made inside it,
+  across awaits, across tasks started inside it, and across any number of frames. An instrumented
+  client has no admission call to pass arguments to, so this is how scope reaches a limiter at
+  all, and it is what makes limiting per tenant realistic rather than theoretical.
+- Three reserved keywords on an instrumented call, `spillway_scope`, `spillway_priority` and
+  `spillway_tags`, removed before the call is forwarded. Prefixed so they cannot collide with a
+  provider parameter now or later.
+- `lease.settle_from(response)`, which reads the real cost off whatever the client library
+  returned. A response with no readable usage settles at the reserved amount and says so once,
+  because the call has already succeeded and losing the caller's result over the bookkeeping
+  would be the worse trade.
+- `Spillway.for_provider(name, ...)`, which assembles the adapter, the dimensions for the limits
+  you named, and an estimator that learns per route. That default is safe from cold: below its
+  sample threshold it defers to the requested maximum.
+- An admission decorator, for work no client covers. Third in the order of things to reach for,
+  and its docstring says so. Its scope may be a callable over the wrapped function's own
+  arguments.
+- The first numbered example, run as a real script by a real test against a real socket.
+
+### Changed
+
+- The admission context manager is now typed as never suppressing an exception, which it never
+  did. A plain boolean told a type checker it might, so any code following an admission block
+  read as unreachable.
+
+### Notes
+
+- **This library ships no limit figures for any provider, and will not.** A rate limit belongs to
+  an account rather than to a provider, and providers do not agree on how to describe one: one
+  publishes named usage tiers applied per model class, another names tiers and then declines to
+  publish figures at all because they are set per organisation. There is no shared vocabulary to
+  encode, the true numbers live in your own provider's console, and a figure shipped here would
+  go stale silently and be wrong for a specific reader. What is encoded instead is how each
+  provider counts, which changes far more slowly and is the part nobody should have to work out.
+- Instrumenting with no limits named admits everything, records what the traffic really costs and
+  says so once. This is the intended first step rather than a misconfiguration: run it, read
+  `Spillway.of(client).snapshot()`, then set a limit your own traffic shows you need.
+- A client speaking a provider's protocol against a host that is not that provider's is treated
+  as a separate service. Those do not charge the requested maximum at admission, do not report
+  the same usage categories and do not send the same headers, so applying the named provider's
+  accounting to them would be confidently wrong on the back of a correct protocol detection.
+- Against a provider that charges the requested maximum at admission, the output length
+  prediction does not help with that provider's rate limit at all, because the reservation has to
+  match what the provider itself takes. Its value there is the concurrency limit, and the
+  observation that a requested maximum far above the real output length is throughput being
+  thrown away.
+- Instrumenting a synchronous client raises rather than returning something that does not work.
+  Admission waits for capacity, and waiting needs a synchronous driver that does not exist yet.
+- Neither client library is imported by this package. A client is recognised from its class, its
+  methods are reached by name, and its responses are read for the attributes they carry, so there
+  are still no required runtime dependencies and no optional extra to install either of them
+  through.
+
 ## 0.0.4 (2026-08-20)
 
 ### Added

@@ -1,6 +1,6 @@
 [project]
 name = "spillway"
-version = "0.0.4"
+version = "0.0.5"
 description = "Congestion control for language model API traffic"
 readme = "README.md"
 requires-python = ">=3.10"
