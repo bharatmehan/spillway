@@ -136,6 +136,30 @@ def dimensions_from(
     return tuple(built)
 
 
+def _combine(
+    built: tuple[Dimension, ...],
+    named: tuple[Dimension, ...],
+) -> tuple[Dimension, ...]:
+    """Join dimensions passed as objects with those named as limits.
+
+    Raises:
+        ConfigurationError: if the same limit arrives both ways. Two figures
+            for one limit have no honest resolution, and silently preferring
+            one would enforce a number the caller can see they did not ask for.
+    """
+    clash = {d.name for d in built} & {d.name for d in named}
+    if clash:
+        name = sorted(clash)[0]
+        message = (
+            f"The {name!r} limit was given twice, once as a dimension and once as "
+            f"{name}=. There is no honest answer when the two disagree. Keep whichever "
+            f"you meant: the keyword for a plain limit, the dimension for one that needs "
+            f"a window, a meter or anything else spelled out."
+        )
+        raise ConfigurationError(message)
+    return built + named
+
+
 @dataclass(frozen=True)
 class Snapshot:
     """How full everything is right now, for one scope.
@@ -197,6 +221,18 @@ class Spillway:
             refuses it. "shed_lowest" drops the lowest priority waiter to make
             room for a higher priority one, and refuses when the arrival is
             itself the lowest.
+        rpm: Requests per minute, if your provider gives you one.
+        rpd: Requests per day.
+        tpm: Tokens per minute, counting input and output together.
+        input_tpm: Input tokens per minute, when metered on their own.
+        output_tpm: Output tokens per minute, when metered on their own.
+        concurrency: How many requests may be in flight at once.
+
+    The last six are the same thing as building the matching dimensions by
+    hand and passing them to `dimensions`, and they exist because naming a
+    figure you read off your provider's own page should not require learning
+    what a dimension is first. This library ships no limit figures of its
+    own: yours are the only ones true for your account.
 
     Example:
         >>> import asyncio
@@ -230,13 +266,20 @@ class Spillway:
         default_timeout: float | None = DEFAULT_TIMEOUT_S,
         queue_capacity: int = DEFAULT_QUEUE_CAPACITY,
         queue_full_policy: QueueFullPolicy = "reject",
+        rpm: float | None = None,
+        rpd: float | None = None,
+        tpm: float | None = None,
+        input_tpm: float | None = None,
+        output_tpm: float | None = None,
+        concurrency: int | None = None,
     ) -> None:
         """Assemble a limiter. Every argument has a usable default.
 
         Raises:
             ConfigurationError: if `default_timeout` is negative, if
-                `queue_capacity` is below one, or if `queue_full_policy` is not
-                one the queue knows.
+                `queue_capacity` is below one, if `queue_full_policy` is not
+                one the queue knows, or if a limit is named twice, once
+                directly and once as a dimension.
         """
         if default_timeout is not None and default_timeout < 0:
             message = (
@@ -247,7 +290,15 @@ class Spillway:
             raise ConfigurationError(message)
         self._default_timeout = default_timeout
         self._clock: Clock = clock if clock is not None else MonotonicClock()
-        self._dimensions = tuple(dimensions)
+        named = dimensions_from(
+            rpm=rpm,
+            rpd=rpd,
+            tpm=tpm,
+            input_tpm=input_tpm,
+            output_tpm=output_tpm,
+            concurrency=concurrency,
+        )
+        self._dimensions = _combine(tuple(dimensions), named)
         self._store: DuplexStore = store if store is not None else MemoryStore(clock=self._clock)
         self._default_scope = Scope.of(scope)
         self._estimator: Estimator = estimator if estimator is not None else MaxTokensEstimator()
