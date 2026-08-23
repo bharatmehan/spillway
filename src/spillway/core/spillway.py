@@ -25,6 +25,7 @@ from spillway.dimensions.rate import Rate
 from spillway.estimators.base import Estimator, Observation, RequestContext
 from spillway.estimators.max_tokens import MaxTokensEstimator
 from spillway.observability.explain import AdmissionExplanation
+from spillway.providers.base import ProviderAdapter
 from spillway.stores.base import Claim, DuplexStore, Utilisation
 from spillway.stores.memory import MemoryStore
 
@@ -48,6 +49,21 @@ seconds is long enough to ride out an ordinary burst and short enough that a
 request stuck behind something pathological still returns an error somebody can
 read. Pass `default_timeout=None` to wait for as long as it takes.
 """
+
+
+def _adapter_for(provider: ProviderAdapter | str | None) -> ProviderAdapter | None:
+    """Turn whatever was passed as a provider into an adapter, or nothing.
+
+    Imported inside the function so that the facade does not pull every
+    shipped adapter in at module import time, and so the dependency runs one
+    way: the providers know about the core, and the core knows only the
+    protocol.
+    """
+    if provider is None or not isinstance(provider, str):
+        return provider
+    from spillway.providers import by_name
+
+    return by_name(provider)
 
 
 _SECONDS_PER_DAY = 86_400.0
@@ -166,6 +182,11 @@ class Spillway:
             reserving the output maximum the caller allowed, which is safe and
             expensive. An estimator that learns from settled requests reserves
             far less for the same safety, once it has a history to read.
+        provider: Whose accounting rules to apply, as an adapter or as the
+            name of one that ships. It decides how a reservation is adjusted
+            before it is taken and how a response is read at settlement.
+            Without one, a reservation is taken exactly as estimated and
+            `lease.settle_from` has nothing to read a response with.
         default_timeout: How many seconds to wait for capacity when a caller
             names neither a timeout nor a deadline. Zero refuses rather than
             waits. None waits for as long as it takes.
@@ -205,6 +226,7 @@ class Spillway:
         clock: Clock | None = None,
         scope: str | Scope | None = None,
         estimator: Estimator | None = None,
+        provider: ProviderAdapter | str | None = None,
         default_timeout: float | None = DEFAULT_TIMEOUT_S,
         queue_capacity: int = DEFAULT_QUEUE_CAPACITY,
         queue_full_policy: QueueFullPolicy = "reject",
@@ -229,18 +251,25 @@ class Spillway:
         self._store: DuplexStore = store if store is not None else MemoryStore(clock=self._clock)
         self._default_scope = Scope.of(scope)
         self._estimator: Estimator = estimator if estimator is not None else MaxTokensEstimator()
+        self._provider = _adapter_for(provider)
         self._queue = WaitQueue(capacity=queue_capacity, policy=queue_full_policy)
         self._dispatcher = Dispatcher(limiter=self, queue=self._queue, clock=self._clock)
 
     def __repr__(self) -> str:
         """Show what is being enforced."""
         names = ", ".join(dimension.name for dimension in self._dimensions)
-        return f"Spillway(dimensions=[{names}], scope={self._default_scope.key!r})"
+        provider = "" if self._provider is None else f", provider={self._provider.name!r}"
+        return f"Spillway(dimensions=[{names}], scope={self._default_scope.key!r}{provider})"
 
     @property
     def dimensions(self) -> tuple[Dimension, ...]:
         """The limits being enforced."""
         return self._dimensions
+
+    @property
+    def provider(self) -> ProviderAdapter | None:
+        """Whose accounting rules are being applied, if anyone's."""
+        return self._provider
 
     def admit(
         self,
