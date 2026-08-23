@@ -480,6 +480,7 @@ class Spillway:
             store=self._store,
             explanation=explanation,
             waited_ms=waited_ms,
+            provider=self._provider,
             on_release=self._dispatcher.notify,
             on_settle=on_settle,
         )

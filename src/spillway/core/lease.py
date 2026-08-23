@@ -7,15 +7,21 @@ or was cancelled halfway through.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from enum import Enum
 
 from spillway.core.cost import Cost
-from spillway.core.errors import LeaseAlreadySettled, LeaseExpired
+from spillway.core.errors import ConfigurationError, LeaseAlreadySettled, LeaseExpired
 from spillway.core.scope import Scope
 from spillway.dimensions.base import Dimension
 from spillway.observability.explain import AdmissionExplanation
+from spillway.providers.base import ProviderAdapter
 from spillway.stores.base import Delta, SyncStore
+
+_log = logging.getLogger(__name__)
+
+_warned_about_unreadable_usage = False
 
 
 class LeaseState(Enum):
@@ -111,6 +117,7 @@ class Lease:
         store: SyncStore,
         explanation: AdmissionExplanation,
         waited_ms: float = 0.0,
+        provider: ProviderAdapter | None = None,
         on_release: Callable[[], None] | None = None,
         on_settle: Callable[[Cost], None] | None = None,
     ) -> None:
@@ -125,6 +132,7 @@ class Lease:
         self._store = store
         self._explanation = explanation
         self._waited_ms = waited_ms
+        self._provider = provider
         self._on_release = on_release
         self._on_settle = on_settle
         self._reason: str | None = None
@@ -189,6 +197,62 @@ class Lease:
             self._released()
         self.state = LeaseState.SETTLED
 
+    def settle_from(self, response: object) -> None:
+        """Report the real cost by reading it off the provider's own response.
+
+        The same as `settle`, without the caller having to know which fields
+        this provider names its counts after. Accepts the object the client
+        library returned, a plain mapping, or a usage record on its own.
+
+        Args:
+            response: Whatever the call came back with.
+
+        Raises:
+            ConfigurationError: if the limiter was built with no provider, so
+                there is nothing that knows how to read this.
+            LeaseAlreadySettled: as `settle`.
+            LeaseExpired: as `settle`.
+
+        A response this provider cannot find usage on does not raise. The call
+        already succeeded, and throwing the caller's result away over the
+        bookkeeping would be the worse trade. The lease settles at the full
+        reserved amount, which is safe and expensive, and it says so once.
+
+        Example:
+            >>> from spillway.core.spillway import Spillway
+            >>> import asyncio
+            >>> limiter = Spillway(provider="anthropic")
+            >>> async def one_call() -> int:
+            ...     async with limiter.admit(max_tokens=1_000) as lease:
+            ...         reply = {"usage": {"input_tokens": 12, "output_tokens": 34}}
+            ...         lease.settle_from(reply)
+            ...         return lease.reserved.output_tokens
+            >>> asyncio.run(one_call())
+            1000
+        """
+        if self._provider is None:
+            message = (
+                "settle_from() needs a provider to read the response with, and this "
+                "limiter has none. Pass provider='anthropic' or provider='openai' when "
+                "building it, or settle by hand with "
+                "lease.settle(input=..., output=...)."
+            )
+            raise ConfigurationError(message)
+        try:
+            actual = self._provider.usage_from(response)
+        except (ValueError, TypeError, AttributeError):
+            _warn_once_about_unreadable_usage(self._provider.name)
+            self.settle(
+                input=self.reserved.input_tokens,
+                output=self.reserved.output_tokens,
+            )
+            return
+        self.settle(
+            input=actual.input_tokens,
+            output=actual.output_tokens,
+            **dict(actual.extra),
+        )
+
     def abandon(self, reason: str | None = None) -> None:
         """Give the whole reservation back, because the request never ran.
 
@@ -234,3 +298,24 @@ class Lease:
             f"it touched. Settle exactly once, or let the context manager do it."
         )
         raise LeaseAlreadySettled(message)
+
+
+def _warn_once_about_unreadable_usage(provider: str) -> None:
+    """Say, once, that a response could not be read and what it cost.
+
+    Once per process rather than per request. The fix is one change at one
+    call site, and repeating it every time would only teach people to filter
+    the message out.
+    """
+    global _warned_about_unreadable_usage
+    if _warned_about_unreadable_usage:
+        return
+    _warned_about_unreadable_usage = True
+    _log.warning(
+        "The %s adapter could not find usage on a response, so the full reserved "
+        "amount was charged instead of what the call really cost. That is safe but "
+        "expensive: nothing corrects a reservation if the real figure is never read. "
+        "Pass the object the client returned, or call lease.settle(input=..., "
+        "output=...) with the figures yourself.",
+        provider,
+    )
