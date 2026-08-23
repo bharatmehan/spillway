@@ -1,5 +1,6 @@
 """The numbered example runs, and does what it says it does."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,24 @@ import pytest
 from tests.servers.mock_provider import MockAnthropic, serving
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "01-quickstart" / "main.py"
+
+
+def _environment(base_url):
+    """The example's environment: this one, pointed at the mock provider.
+
+    Inherited rather than replaced. A bare environment looks hermetic and is
+    not portable: on Windows the event loop cannot load its socket provider
+    without the variables that say where the system lives, so the example
+    fails before it reaches a line of its own code.
+
+    The real credential is removed rather than left in place. The base URL
+    already sends every request to a local socket, so it would not reach the
+    provider either way, but a test has no business handling somebody's key at
+    all.
+    """
+    environment = {name: value for name, value in os.environ.items() if name != "ANTHROPIC_API_KEY"}
+    environment["SPILLWAY_EXAMPLE_BASE_URL"] = base_url
+    return environment
 
 
 def _reported(output, name):
@@ -29,7 +48,7 @@ def test_the_quickstart_runs_and_reports_what_was_used():
             [sys.executable, str(EXAMPLE)],
             capture_output=True,
             text=True,
-            env={"SPILLWAY_EXAMPLE_BASE_URL": base_url, "PATH": "/usr/bin:/bin"},
+            env=_environment(base_url),
             check=False,
             timeout=60,
         )
