@@ -735,15 +735,27 @@ class AdmitContext:
         waited reserves what it asked for when it arrived, because a prediction
         that moved while it queued would mean its place in the queue was earned
         against a different request.
+
+        The provider gets the last word, and it is applied to a caller's
+        explicit estimate as readily as to a predicted one. A provider that
+        charges the requested maximum at admission charges it whoever did the
+        predicting, and a reservation smaller than the one the provider itself
+        takes means believing in headroom the provider does not agree exists.
+        That produces rate limit responses nothing predicted, which is the
+        worst outcome available to a limiter.
         """
         estimate = self._estimate
         if estimate is None:
             estimate = self._limiter._estimator.estimate(context)
-        return Cost(
+        predicted = Cost(
             input_tokens=estimate.input,
             output_tokens=estimate.output.quantile(estimate.quantile),
             requests=1,
         )
+        provider = self._limiter._provider
+        if provider is None:
+            return predicted
+        return provider.adjust(predicted, context)
 
     async def __aenter__(self) -> Lease:
         """Reserve the capacity and hand over the lease.
