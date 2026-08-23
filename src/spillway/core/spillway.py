@@ -7,11 +7,12 @@ whether that call may go now.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Literal
+from typing import Literal, Protocol, TypeVar, overload
 
 from spillway.core.clock import Clock, MonotonicClock
 from spillway.core.cost import Cost, Estimate
@@ -34,6 +35,7 @@ from spillway.stores.memory import MemoryStore
 _log = logging.getLogger(__name__)
 
 _warned_about_unsettled = False
+_warned_about_no_limits = False
 
 # ponytail: a flat expiry, wrong for both a two second classification and a six
 # minute reasoning call. It becomes a function of observed durations once those
@@ -51,6 +53,163 @@ seconds is long enough to ride out an ordinary burst and short enough that a
 request stuck behind something pathological still returns an error somebody can
 read. Pass `default_timeout=None` to wait for as long as it takes.
 """
+
+
+ClientT = TypeVar("ClientT")
+
+
+class ClassInstrument(Protocol):
+    """`Spillway.instrument`, which builds the limiter as well as using it."""
+
+    def __call__(
+        self,
+        client: ClientT,
+        *,
+        provider: ProviderAdapter | str | None = None,
+        scope: str | Scope | None = None,
+        priority: int | Priority | None = None,
+        rpm: float | None = None,
+        rpd: float | None = None,
+        tpm: float | None = None,
+        input_tpm: float | None = None,
+        output_tpm: float | None = None,
+        concurrency: int | None = None,
+        dimensions: Sequence[Dimension] = (),
+        store: DuplexStore | None = None,
+        clock: Clock | None = None,
+        estimator: Estimator | None = None,
+        default_timeout: float | None = DEFAULT_TIMEOUT_S,
+    ) -> ClientT:
+        """Instrument `client`, building a limiter for it."""
+        ...
+
+
+class BoundInstrument(Protocol):
+    """`spillway.instrument`, which uses the limiter you already built."""
+
+    def __call__(
+        self,
+        client: ClientT,
+        *,
+        provider: ProviderAdapter | str | None = None,
+        scope: str | Scope | None = None,
+        priority: int | Priority | None = None,
+    ) -> ClientT:
+        """Instrument `client` against this limiter."""
+        ...
+
+
+class _Instrument:
+    """One verb that means something slightly different on the class.
+
+    Reached through the class it builds the limiter; reached through an
+    instance it uses that one, and the limiter building arguments are then not
+    accepted because the limiter already exists.
+
+    Two verbs for one concept would be worse than one verb doing two jobs, so
+    the cost is paid here instead: a name that binds differently on a class and
+    an instance is neither a method nor a classmethod, and keeping strict type
+    checking honest about it takes a descriptor with an overloaded lookup.
+    Everything either spelling then does is ordinary.
+    """
+
+    # ponytail: a hand written descriptor, because no decorator in the standard
+    # library binds one name to two behaviours. Roughly fifteen lines and it
+    # never needs to grow. If Python ever ships one, delete this.
+
+    @overload
+    def __get__(self, instance: None, owner: type[Spillway]) -> ClassInstrument: ...
+
+    @overload
+    def __get__(self, instance: Spillway, owner: type[Spillway]) -> BoundInstrument: ...
+
+    def __get__(
+        self,
+        instance: Spillway | None,
+        owner: type[Spillway],
+    ) -> ClassInstrument | BoundInstrument:
+        """Hand back whichever spelling was reached for."""
+        if instance is None:
+            return _instrument_and_build
+        return functools.partial(_instrument_with, instance)
+
+
+def _instrument_and_build(
+    client: ClientT,
+    *,
+    provider: ProviderAdapter | str | None = None,
+    scope: str | Scope | None = None,
+    priority: int | Priority | None = None,
+    rpm: float | None = None,
+    rpd: float | None = None,
+    tpm: float | None = None,
+    input_tpm: float | None = None,
+    output_tpm: float | None = None,
+    concurrency: int | None = None,
+    dimensions: Sequence[Dimension] = (),
+    store: DuplexStore | None = None,
+    clock: Clock | None = None,
+    estimator: Estimator | None = None,
+    default_timeout: float | None = DEFAULT_TIMEOUT_S,
+) -> ClientT:
+    """Build a limiter for this client's provider, and instrument it."""
+    from spillway.integrations.detect import adapter_for
+    from spillway.integrations.instrument import patch
+
+    adapter = adapter_for(client) if provider is None else provider
+    limiter = Spillway.for_provider(
+        adapter,
+        rpm=rpm,
+        rpd=rpd,
+        tpm=tpm,
+        input_tpm=input_tpm,
+        output_tpm=output_tpm,
+        concurrency=concurrency,
+        dimensions=dimensions,
+        store=store,
+        clock=clock,
+        estimator=estimator,
+        default_timeout=default_timeout,
+    )
+    if not limiter.dimensions:
+        _warn_once_about_no_limits()
+    return patch(client, limiter, provider=adapter, scope=scope, priority=priority)
+
+
+def _instrument_with(
+    limiter: Spillway,
+    client: ClientT,
+    *,
+    provider: ProviderAdapter | str | None = None,
+    scope: str | Scope | None = None,
+    priority: int | Priority | None = None,
+) -> ClientT:
+    """Instrument this client against a limiter that already exists."""
+    from spillway.integrations.instrument import patch
+
+    return patch(
+        client,
+        limiter,
+        provider=provider if provider is not None else limiter.provider,
+        scope=scope,
+        priority=priority,
+    )
+
+
+def _warn_once_about_no_limits() -> None:
+    """Say, once, that nothing is being enforced and how to change that."""
+    global _warned_about_no_limits
+    if _warned_about_no_limits:
+        return
+    _warned_about_no_limits = True
+    _log.warning(
+        "This client is instrumented but no limits were named, so every call is "
+        "admitted and nothing is enforced. That is a reasonable place to start: let it "
+        "run, then read Spillway.of(client).snapshot() to see what your traffic "
+        "actually does. To enforce a limit, name it, for example "
+        "Spillway.instrument(client, rpm=1_000), using the figures from your "
+        "provider's own limits page."
+    )
 
 
 def _adapter_for(provider: ProviderAdapter | str | None) -> ProviderAdapter | None:
@@ -409,6 +568,42 @@ class Spillway:
     def provider(self) -> ProviderAdapter | None:
         """Whose accounting rules are being applied, if anyone's."""
         return self._provider
+
+    instrument = _Instrument()
+    """Return a copy of a client whose completion methods go through a limiter.
+
+    Two lines where the client is built, and every call site is untouched.
+
+        client = Spillway.instrument(AsyncAnthropic(), rpm=1_000)
+        reply = await client.messages.create(...)
+
+    Reached through the class it builds the limiter from the limits you name.
+    Reached through an instance it uses the one you already built, which is
+    what to do the moment one quota is shared by more than one client or more
+    than one process.
+
+        chat = spillway.instrument(AsyncAnthropic())
+        batch = spillway.instrument(AsyncAnthropic())
+
+    Naming no limits admits everything, records what the traffic really costs,
+    and says so once. That is the intended first step: this library ships no
+    limit figures, and the ones worth enforcing are the ones your own traffic
+    turns out to need.
+    """
+
+    @staticmethod
+    def of(client: object) -> Spillway:
+        """Return the limiter behind an instrumented client.
+
+        How a health check reaches `snapshot()` without the application
+        threading a limiter around beside every client it holds.
+
+        Raises:
+            ConfigurationError: if this client is not instrumented.
+        """
+        from spillway.integrations.instrument import limiter_of
+
+        return limiter_of(client)
 
     def admit(
         self,
