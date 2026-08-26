@@ -1,12 +1,7 @@
 """Who is waiting for capacity, and who goes next.
 
-A queue exists because refusing is not the only honest answer. Capacity that
-is full now is usually free shortly, and a caller who said they can wait would
-rather wait than handle an error.
-
-What the queue decides is order, and order is the whole of the policy at this
-stage: the highest priority band that has anyone in it, and within a band the
-one who arrived first.
+Order is the whole of the policy here: the highest priority band that has
+anyone in it, and within a band the one who arrived first.
 """
 
 from __future__ import annotations
@@ -43,10 +38,7 @@ def _full(waiter: Waiter, capacity: int) -> AdmissionDenied:
     """Build the refusal for a waiter whose band has no room.
 
     Negative priority means the caller said this work can wait, and something
-    that can wait can also not happen. Under pressure the low bands fill first,
-    so their arrivals bounce while the interactive band, whose capacity is its
-    own, carries on untouched. That is the whole of the shedding rule, and it
-    needs no saturation threshold to tune.
+    that can wait can also be dropped, so it is shed rather than refused.
     """
     if waiter.priority < 0:
         message = (
@@ -83,22 +75,18 @@ class Waiter:
         priority: Which band it waits in. Higher goes first.
         reserved: What the lease will hold once it is granted.
         deadline_ms: When to give up, on the limiter's clock. None waits for
-            ever, which is only reachable when a caller asks for it explicitly.
+            ever, and only an explicit request gets that.
         queued_at_ms: When the caller first asked, so the wait can be reported.
         future: Where the lease, or the exception, is delivered.
         refusal: The refusal that put this waiter here, replaced by each later
-            attempt. A timeout is reported with it, so it names the dimension
-            that bound rather than merely saying time ran out.
-        refused_at_ms: When that refusal was made. A rate refusal says how long
-            until the charge would fit, and that answer shrinks with every
-            millisecond that passes, so reporting it later needs to know how
-            much later.
+            attempt, so a timeout names the dimension that bound.
+        refused_at_ms: When that refusal was made, since its retry after has to
+            be counted down from there.
         sequence: Arrival order across the whole queue, assigned on push.
         position: How many were ahead of it in its own band on arrival.
-        on_settle: Handed to the lease once this waiter is granted one, so a
-            settlement reaches whatever is learning from it. Carried here
+        on_settle: Handed to the lease once this waiter is granted one. Carried
             rather than rebuilt, because it closes over what the caller asked
-            for and only the caller knew that.
+            for.
 
     Example:
         >>> import asyncio
@@ -140,11 +128,8 @@ class WaitQueue:
     One queue per limiter. Strictly by priority band, and first in first out
     within a band, which is the whole of the ordering policy for now.
 
-    Capacity is per band rather than shared. A flood of batch work must not
-    consume the slots an interactive request needs, and that is a real failure
-    mode rather than a hypothetical one. A queue with no bound at all is a
-    memory leak with extra steps: it turns a rate limit problem into an out of
-    memory problem, which is strictly worse.
+    Capacity is per band rather than shared, so a flood of batch work cannot
+    consume the slots an interactive request needs.
 
     Args:
         capacity: The most waiters one band may hold.
@@ -233,13 +218,12 @@ class WaitQueue:
         """Add a waiter to the back of its own band.
 
         Records the arrival order and how many were already ahead of it, which
-        is the number worth reporting later: at selection it is always zero,
-        because selection takes the head.
+        is the number worth reporting later: at selection it is always zero.
 
         Under the shed lowest policy a full band may displace a waiter from a
-        lower one instead of refusing, in which case that waiter's caller is
-        given `Shed` here rather than anywhere else. Doing it as part of the
-        insert is what makes the swap impossible to half finish.
+        lower one instead of refusing, and that waiter's caller is given `Shed`
+        here. Doing it as part of the insert is what stops the swap being half
+        finished.
 
         Raises:
             Shed: if this waiter's band is full and the work is sheddable,
@@ -262,8 +246,8 @@ class WaitQueue:
     def select(self) -> Waiter | None:
         """Return whoever should be served next, without removing them.
 
-        The head of the highest band that has anyone in it. Stage ten replaces
-        the body of this method and nothing else, so the choice of who goes
+        The head of the highest band that has anyone in it. Weighted fair
+        sharing replaces the body of this method and nothing else, so who goes
         next stays in one place.
 
         Returns:
@@ -295,12 +279,7 @@ class WaitQueue:
             del self._bands[waiter.priority]
 
     def expire(self, now_ms: float) -> list[Waiter]:
-        """Remove and return every waiter whose deadline has passed.
-
-        Every band, not just the one being served. A waiter behind a head that
-        cannot be admitted is still owed its own deadline, and checking only
-        the selected waiter is what makes it wait for ever instead.
-        """
+        """Remove and return every waiter whose deadline has passed, in every band."""
         due: list[Waiter] = []
         for priority in list(self._bands):
             band = self._bands[priority]
@@ -317,17 +296,13 @@ class WaitQueue:
     def _displace(self, arrival: Waiter) -> bool:
         """Drop the lowest priority waiter for `arrival`, under the shed lowest policy.
 
-        The specification for this policy is that the lowest priority waiter
-        anywhere makes way for a higher priority arrival, and refuses when the
-        arrival is itself the lowest. Capacity being per band is what makes
-        that need stating precisely: dropping a waiter from a lower band frees
-        no slot in the arrival's own band, so the arrival is queued regardless
-        and its band may sit one over capacity for each waiter it has
-        displaced. No drop ever happens without a matching admission, so the
-        total number waiting never grows, which is the bound that matters.
+        Capacity is per band, so dropping from a lower band frees no slot in
+        the arrival's own. The arrival is queued regardless and its band may sit
+        one over capacity for each waiter displaced. No drop happens without a
+        matching admission, so the total waiting never grows, and that is the
+        bound that matters.
 
-        The newest waiter in the lowest band goes, because it is the one that
-        has waited least.
+        The newest waiter in the lowest band goes, having waited least.
 
         Returns:
             Whether room was made. False means the arrival is the lowest

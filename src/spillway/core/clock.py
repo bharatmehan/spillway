@@ -1,12 +1,8 @@
 """Time access for the whole library.
 
 Every time reference goes through the `Clock` protocol. Nothing else in the
-library reads a system clock directly.
-
-This is not gold plating. Rate windows, lease expiry, feedback controllers and
-fairness counters are all time dependent, and testing any of them against wall
-clock time produces flaky tests that eventually get deleted. A clock that can be
-advanced by hand makes the whole decision path deterministic.
+library reads a system clock directly, so a clock advanced by hand makes the
+whole decision path deterministic.
 """
 
 from __future__ import annotations
@@ -22,10 +18,6 @@ _NS_PER_MS = 1_000_000.0
 
 class Clock(Protocol):
     """A source of monotonic time, in milliseconds.
-
-    Milliseconds because every limit in this library is expressed per second,
-    per minute or per day, and a float millisecond is precise enough for all of
-    them while staying readable in an explanation.
 
     Implement this to drive the library from your own time source.
 
@@ -54,18 +46,16 @@ class Clock(Protocol):
     def now_ms(self) -> float:
         """Return the current time in milliseconds.
 
-        Only differences between two readings are meaningful. The origin is
-        arbitrary and may differ between implementations.
+        Only differences between two readings are meaningful; the origin is
+        arbitrary.
         """
         ...
 
     async def sleep(self, delay_ms: float) -> None:
         """Wait for `delay_ms` milliseconds of this clock's time.
 
-        On the real clock this is an ordinary asynchronous sleep. On a clock
-        driven by hand it returns only when that clock is advanced past the
-        wake time, which is what lets a test run ten minutes of waiting in a
-        millisecond of real time.
+        On the real clock an ordinary asynchronous sleep. On one driven by hand,
+        it returns when that clock is advanced past the wake time.
 
         A delay of zero or less returns without waiting, though it may still
         yield control.
@@ -76,9 +66,8 @@ class Clock(Protocol):
 class MonotonicClock:
     """The real clock, reading a monotonic source that never goes backwards.
 
-    This is the default. A monotonic source is used rather than wall clock time
-    so that a system clock adjustment cannot make a lease look expired, or a
-    rate window look replenished, when neither has happened.
+    The default. Monotonic rather than wall clock so a system clock adjustment
+    cannot make a lease look expired or a window look replenished.
 
     Example:
         >>> import asyncio
@@ -102,14 +91,12 @@ class MonotonicClock:
 class FakeClock:
     """A clock that only moves when you tell it to.
 
-    Use this in tests and simulations. Because it never advances on its own, a
-    test can assert the exact millisecond at which a rate window replenishes or
-    a lease expires, rather than sleeping and hoping.
+    Use this in tests and simulations. It never advances on its own, so a test
+    can assert the exact millisecond a window replenishes or a lease expires.
 
-    Sleeping on it does not sleep at all. A sleeper is recorded at its wake
-    time and released when the clock is advanced past it, so a whole afternoon
-    of waiting costs a millisecond of real time and produces the same sequence
-    of events every run.
+    Sleeping on it does not sleep. A sleeper is recorded at its wake time and
+    released when the clock is advanced past it, so an afternoon of waiting
+    costs a millisecond and runs the same way every time.
 
     Example:
         >>> clock = FakeClock()
@@ -156,9 +143,8 @@ class FakeClock:
     async def sleep(self, delay_ms: float) -> None:
         """Wait until this clock has been advanced by `delay_ms` milliseconds.
 
-        Nothing happens on its own. If the clock is never advanced past the
-        wake time, this waits for ever, which is the point: a test that forgets
-        to advance fails rather than passing on a real sleep nobody noticed.
+        If the clock is never advanced past the wake time this waits for ever,
+        which is the point: a test that forgets to advance fails.
         """
         if delay_ms <= 0:
             return
@@ -196,12 +182,10 @@ class FakeClock:
     def _release(self) -> None:
         """Wake every sleeper whose time has come, earliest first.
 
-        The clock is already at its new value when this runs, rather than being
-        stepped to each wake time in turn. A future that is resolved does not
-        resume its coroutine until the loop next runs, so every sleeper woken by
-        one advance would read the same time either way. A large advance is
-        therefore the same thing as the process being descheduled for that long,
-        which is a thing that really happens and is worth letting tests see.
+        The clock is already at its new value here, not stepped to each wake
+        time in turn, so every sleeper woken by one advance reads the same time.
+        A large advance is the process being descheduled for that long, which
+        really happens and is worth letting tests see.
         """
         while self._sleepers and self._sleepers[0][0] <= self._now_ms:
             _wake_at_ms, _sequence, future = heapq.heappop(self._sleepers)

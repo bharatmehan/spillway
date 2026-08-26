@@ -4,17 +4,11 @@ A single dispatcher per limiter owns the queue. It picks the best waiter, asks
 the store for that waiter's capacity, and either hands over a lease or waits
 until something could have changed.
 
-The obvious alternative, every waiter retrying on its own timer, is easier to
-write and wrong. Whichever waiter happens to wake first wins, so priority
-becomes advisory rather than real, and a burst of waiters becomes a burst of
-contending reservation attempts against the one thing they are all queued
-behind.
-
 Nothing here polls. Capacity becomes available in exactly two ways and the
 dispatcher waits on both at once: a gauge is given back when a request settles,
 which arrives as an event, and a rate window replenishes with the passage of
 time, which is a sleep of exactly as long as the last refusal said it would
-take. Missing either produces a hang that only shows up under load.
+take. Missing either is a hang that only shows up under load.
 """
 
 from __future__ import annotations
@@ -47,10 +41,8 @@ FAILURE_BACKOFF_MS = 1_000.0
 def _warn_once_about_a_failure() -> None:
     """Report the first unexpected failure in the dispatch loop, with its traceback.
 
-    Once per process. The loop carries on afterwards, because a dispatcher that
-    died would be a hang for every caller that ever queues, and a hang is the
-    failure nobody can diagnose. Repeating the same traceback on every pass
-    would only teach people to filter this message out.
+    Once per process, because the loop carries on and would otherwise repeat the
+    same traceback on every pass.
     """
     global _warned_about_a_failure
     if _warned_about_a_failure:
@@ -67,10 +59,8 @@ def _warn_once_about_a_failure() -> None:
 def _still_to_wait(waiter: Waiter, now_ms: float) -> float | None:
     """How long the binding limit would still need, as of now.
 
-    A rate refusal says how long until the same charge would fit, and that
-    answer shrinks one for one with the time that passes. Reporting the figure
-    the refusal carried, seconds or minutes after it was made, would send a
-    caller away for longer than they need to be away.
+    The figure a refusal carried shrinks one for one with the time since it was
+    made, so it is counted down rather than reported as it stands.
     """
     retry_after = waiter.refusal.retry_after
     if retry_after is None:
@@ -174,8 +164,7 @@ class Dispatcher:
         """Start the dispatch task if it is not already going.
 
         Called after every push. Starting lazily is what keeps a limiter that
-        never blocks free of any background task, which matters because a task
-        nobody stops is a task that outlives the thing it was serving.
+        never blocks free of any background task.
         """
         if self._task is None or self._task.done():
             self._loop = asyncio.get_running_loop()
@@ -184,10 +173,9 @@ class Dispatcher:
     def notify(self) -> None:
         """Say that capacity has gone back, so a waiter may now fit.
 
-        Routed through the event loop rather than setting the event directly.
-        A lease is settled synchronously and may be settled from a worker
-        thread, and setting an event from the wrong thread schedules a callback
-        the loop never learns about, which is a wakeup lost for good.
+        Routed through the loop rather than setting the event directly: a lease
+        settles synchronously and may settle from a worker thread, and setting
+        an event from the wrong thread loses the wakeup for good.
         """
         loop = self._loop
         if loop is None:
@@ -200,13 +188,12 @@ class Dispatcher:
     async def _run(self) -> None:
         """Serve waiters until there are none, then stop.
 
-        The emptiness check, the clearing of the task and the return happen
-        with no await between them, so a push cannot slip in and find itself
-        with no dispatcher.
+        The emptiness check, the clearing of the task and the return happen with
+        no await between them, so a push cannot slip in and find itself with no
+        dispatcher.
 
         Nothing short of cancellation stops it. A dispatcher that died on an
-        unexpected error would be a hang for every caller that ever queues,
-        and a hang is the failure nobody can diagnose from the outside.
+        unexpected error would hang every caller that ever queues.
         """
         try:
             while self._queue.depth:
@@ -262,9 +249,8 @@ class Dispatcher:
     def _give_up_on_the_overdue(self) -> None:
         """Fail every waiter whose deadline has passed, in every band.
 
-        Every pass, not only for the waiter being served. A waiter sitting
-        behind a head that cannot be admitted is owed its own deadline, and
-        checking only the selected one is what makes it wait for ever.
+        Every band, not only the waiter being served: one sitting behind a head
+        that cannot be admitted is still owed its own deadline.
         """
         now_ms = self._clock.now_ms()
         for waiter in self._queue.expire(now_ms):
@@ -306,8 +292,7 @@ class Dispatcher:
 
         A rate window says exactly when the same charge would fit. A gauge says
         nothing, because it frees when a request finishes rather than when time
-        passes, so a waiter blocked on one wakes on the release event or on its
-        own deadline and on nothing else.
+        passes, so a waiter blocked on one wakes on the release or its deadline.
         """
         candidates: list[float] = []
         if refusal.retry_after is not None:
