@@ -1,8 +1,7 @@
 """Limits on consumption over a rolling window.
 
-Requests per minute, input tokens per minute, tokens per day. These are the
-limits providers publish, and they are the ones a caller is most likely to hit
-first.
+Requests per minute, input tokens per minute, tokens per day: the limits
+providers publish, and the ones a caller hits first.
 """
 
 from __future__ import annotations
@@ -24,10 +23,9 @@ INFERRED_METERS: dict[str, Meter] = {
 }
 """Limit names common enough across providers that the meter is unambiguous.
 
-Any other name needs an explicit meter. Guessing from a name this table does not
-know would mean metering the wrong thing silently, and that surfaces months
-later as unexplained rate limit responses from the provider, which is close to
-undiagnosable from the outside.
+Any other name needs an explicit meter. Guessing beyond this table would meter
+the wrong thing silently, and that surfaces much later as unexplained rate limit
+responses from the provider.
 """
 
 
@@ -54,9 +52,8 @@ class Rate:
     """A limit on how much of something may be consumed per window.
 
     Args:
-        name: What this limit is called. Providers publish names like `rpm`
-            and `input_tpm`, and using the same name makes an explanation
-            readable against the provider's own documentation.
+        name: What this limit is called. Use the provider's own name, such as
+            `rpm` or `input_tpm`, so an explanation reads against their docs.
         limit: How many units per window.
         meter: Which part of a request's cost this limit counts. Inferred from
             the name for the widely used ones listed in `INFERRED_METERS`, and

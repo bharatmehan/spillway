@@ -1,14 +1,13 @@
 """What every limitable axis has in common.
 
-A dimension knows one thing: how to turn a request's cost into a claim on one
-key, and how to turn the difference between what was reserved and what was
-really used into a correction. It does not decide whether the claim fits, it
-does not talk to a store, and it does not know about any other dimension.
+A dimension turns a request's cost into a claim on one key, and turns the
+difference between reserved and actual into a correction. It does not decide
+whether the claim fits, talk to a store, or know about any other dimension.
 
-That narrowness is deliberate. Deciding whether a claim fits has to happen for
-every dimension at once, or a request can be admitted against two limits and
-refused by the third with the first two already consumed. So dimensions describe
-what they want and something else applies the whole set or none of it.
+Whether a claim fits has to be decided for every dimension at once, or a request
+is admitted against two limits and refused by the third with the first two
+already consumed. So dimensions describe what they want, and something else
+applies the whole set or none of it.
 """
 
 from __future__ import annotations
@@ -23,8 +22,8 @@ from spillway.stores.base import Claim, ClaimKind, Delta
 def claim_key(scope: Scope, name: str) -> str:
     """Build the store key for one dimension within one scope.
 
-    Every dimension keys the same way, so that a store can be handed keys it
-    knows nothing about and two dimensions can never collide by accident.
+    Every dimension keys the same way, so a store can be handed keys it knows
+    nothing about and two dimensions cannot collide.
 
     Example:
         >>> claim_key(Scope("tenant:acme"), "input_tpm")
@@ -36,9 +35,9 @@ def claim_key(scope: Scope, name: str) -> str:
 class Dimension(Protocol):
     """One resource axis that a request can run out of.
 
-    Implement this to limit something this library does not ship. The two
-    methods are pure: they read nothing and change nothing, so a dimension can
-    be asked what it wants without any of it taking effect.
+    Implement this to limit something this library does not ship. Both methods
+    are pure, so a dimension can be asked what it wants without any of it taking
+    effect.
 
     Example:
         A dimension that limits requests carrying an unusually long prompt.
@@ -79,17 +78,16 @@ class Dimension(Protocol):
     def limit(self) -> float:
         """The most this axis allows, in whatever units it counts.
 
-        Read rather than stored by anything else, because an adaptive limit
-        changes underneath and a cached copy would go stale.
+        Read each time rather than cached, because an adaptive limit changes
+        underneath.
         """
         ...
 
     def claim(self, cost: Cost, scope: Scope) -> Claim | None:
         """Say what this request would take on this axis.
 
-        Returns None when the axis does not apply to this request, which is
-        how a dimension opts out rather than claiming nothing. A claim of zero
-        would still be evaluated and reported; None is not there at all.
+        Returns None when the axis does not apply, which is how a dimension
+        opts out. A claim of zero would still be evaluated and reported.
         """
         ...
 
