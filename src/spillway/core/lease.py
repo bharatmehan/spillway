@@ -49,14 +49,12 @@ class Lease:
     """Capacity held for one in flight request.
 
     Settle it with the real cost when the request finishes. The difference
-    between what was reserved and what was really used goes back immediately,
-    which is what makes it affordable to reserve conservatively in the first
-    place: the surplus is available to the next caller within this request's own
-    lifetime rather than at the end of the window.
+    between what was reserved and what was really used goes back immediately, so
+    the surplus reaches the next caller within this request's own lifetime
+    rather than at the end of the window.
 
-    Settling is not optional in the sense that matters. If a lease is never
-    settled its capacity is only recovered when it expires, and until then the
-    limit is smaller than it was configured to be.
+    A lease that is never settled has its capacity recovered only when it
+    expires, and until then the limit is smaller than it was configured to be.
 
     Attributes:
         id: Identifies this reservation to the store.
@@ -67,11 +65,9 @@ class Lease:
         state: Where this lease is in its life.
 
     A lease also takes two callbacks. `on_release` is called once whichever way
-    it finishes: capacity coming back is the event somebody else has been
-    waiting for, and a limiter that only learned about it by asking again on a
-    timer would make every queued request pay for the delay. `on_settle` is
-    called with the real cost, and only from a settlement, because an abandoned
-    request produced nothing and there is nothing to learn from it.
+    it finishes, because capacity coming back is the event a waiter is asleep
+    on. `on_settle` is called with the real cost and only from a settlement,
+    since an abandoned request produced nothing to learn from.
 
     Example:
         >>> from spillway.core.clock import FakeClock
@@ -165,10 +161,10 @@ class Lease:
 
         Raises:
             LeaseAlreadySettled: if this lease was already settled or
-                abandoned. Raised rather than ignored, because counting one
-                request twice corrupts every limit it touched.
+                abandoned. Counting one request twice would corrupt every limit
+                it touched.
             LeaseExpired: if the lease outlived its expiry and its capacity was
-                reclaimed. The message names the fix.
+                already reclaimed.
         """
         self._require_held()
         actual = Cost(
@@ -200,9 +196,9 @@ class Lease:
     def settle_from(self, response: object) -> None:
         """Report the real cost by reading it off the provider's own response.
 
-        The same as `settle`, without the caller having to know which fields
-        this provider names its counts after. Accepts the object the client
-        library returned, a plain mapping, or a usage record on its own.
+        The same as `settle`, without needing to know which fields this
+        provider names its counts after. Accepts the object the client library
+        returned, a plain mapping, or a usage record on its own.
 
         Args:
             response: Whatever the call came back with.
@@ -213,10 +209,10 @@ class Lease:
             LeaseAlreadySettled: as `settle`.
             LeaseExpired: as `settle`.
 
-        A response this provider cannot find usage on does not raise. The call
-        already succeeded, and throwing the caller's result away over the
-        bookkeeping would be the worse trade. The lease settles at the full
-        reserved amount, which is safe and expensive, and it says so once.
+        A response this provider cannot find usage on does not raise: the call
+        already succeeded, and losing the caller's result over the bookkeeping
+        is the worse trade. It settles at the full reserved amount, which is
+        safe and expensive, and says so once.
 
         Example:
             >>> from spillway.core.spillway import Spillway
@@ -256,9 +252,9 @@ class Lease:
     def abandon(self, reason: str | None = None) -> None:
         """Give the whole reservation back, because the request never ran.
 
-        Nothing was consumed, so there is nothing to reconcile. Abandoning a
-        lease that is already finished does nothing, because this runs on the
-        failure path and raising a second error there would bury the first.
+        Nothing was consumed, so there is nothing to reconcile. Abandoning an
+        already finished lease does nothing: this runs on the failure path and
+        raising there would bury the original error.
 
         Args:
             reason: Recorded for the caller's benefit. Nothing branches on it.
@@ -275,11 +271,9 @@ class Lease:
     def _released(self) -> None:
         """Say that this lease has given up whatever it was holding.
 
-        Called once, on every path that ends a lease, including the one where
-        the settlement found the reservation already expired: the capacity came
-        back when it was reclaimed, so somebody waiting for it should still be
-        told. Abandoning a lease that already finished notifies nothing, since
-        nothing came back the second time.
+        Called once on every path that ends a lease, including a settlement
+        that found the reservation already expired: the capacity came back when
+        it was reclaimed, so a waiter should still be told.
         """
         if self._on_release is not None:
             self._on_release()
@@ -303,9 +297,8 @@ class Lease:
 def _warn_once_about_unreadable_usage(provider: str) -> None:
     """Say, once, that a response could not be read and what it cost.
 
-    Once per process rather than per request. The fix is one change at one
-    call site, and repeating it every time would only teach people to filter
-    the message out.
+    Once per process rather than per request. The fix is one change at one call
+    site.
     """
     global _warned_about_unreadable_usage
     if _warned_about_unreadable_usage:

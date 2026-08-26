@@ -19,9 +19,8 @@ class Scope:
     is for the caller. Requests in different scopes consume separate budgets on
     every dimension.
 
-    This is a value object over a string rather than a bare string because it
-    gains a fair share weight and a parent scope later, and widening a string
-    parameter into a type afterwards is a change every caller has to notice.
+    A value object rather than a bare string, because it gains a fair share
+    weight and a parent scope later.
 
     Example:
         >>> Scope("tenant:acme").key
@@ -44,15 +43,15 @@ class Scope:
             raise ValueError(message)
 
     def __str__(self) -> str:
-        """Return the key, so a scope reads plainly in a message or a store key."""
+        """Return the key."""
         return self.key
 
     @classmethod
     def of(cls, value: str | Scope | None) -> Scope:
         """Coerce whatever a caller passed into a scope.
 
-        Accepting a plain string at the public boundary keeps the common case a
-        single word, while everything inside the library works with the type.
+        A plain string is accepted at the public boundary so the common case
+        stays one word.
         """
         if value is None:
             return DEFAULT_SCOPE
@@ -72,8 +71,7 @@ class Priority(IntEnum):
     accepted, so a caller with finer bands can use their own numbers.
 
     A negative priority means the work is sheddable: under saturation it may be
-    dropped rather than queued, on the grounds that whoever submitted it said
-    it can wait, and something that can wait can also not happen.
+    dropped rather than queued.
 
     Example:
         >>> Priority.INTERACTIVE > Priority.NORMAL > Priority.BATCH

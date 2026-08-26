@@ -47,11 +47,9 @@ DEFAULT_LEASE_TTL_MS = 60_000.0
 DEFAULT_TIMEOUT_S = 30.0
 """How long a caller who names no timeout waits before giving up.
 
-Waiting for ever is almost never what anyone meant, and it is the failure that
-looks like the library hanging rather than like a limit being reached. Thirty
-seconds is long enough to ride out an ordinary burst and short enough that a
-request stuck behind something pathological still returns an error somebody can
-read. Pass `default_timeout=None` to wait for as long as it takes.
+Long enough to ride out an ordinary burst, short enough that a request stuck
+behind something pathological still returns a readable error rather than looking
+like a hang. Pass `default_timeout=None` to wait for as long as it takes.
 """
 
 
@@ -215,10 +213,8 @@ def _warn_once_about_no_limits() -> None:
 def _adapter_for(provider: ProviderAdapter | str | None) -> ProviderAdapter | None:
     """Turn whatever was passed as a provider into an adapter, or nothing.
 
-    Imported inside the function so that the facade does not pull every
-    shipped adapter in at module import time, and so the dependency runs one
-    way: the providers know about the core, and the core knows only the
-    protocol.
+    Imported inside the function to keep the dependency running one way: the
+    providers know about the core, the core knows only the protocol.
     """
     if provider is None or not isinstance(provider, str):
         return provider
@@ -232,10 +228,8 @@ _SECONDS_PER_DAY = 86_400.0
 NAMED_LIMITS = ("rpm", "rpd", "tpm", "input_tpm", "output_tpm", "concurrency")
 """The limits that can be named directly rather than built as dimensions.
 
-These are the shapes providers actually publish, and the names are the ones
-they publish them under, so a figure copied off a provider's own page goes in
-without translation. Anything else is a `Dimension` passed to `dimensions`,
-which is what these are sugar for.
+The names providers publish under, so a figure copied off their page goes in
+without translation. Anything else is a `Dimension` passed to `dimensions`.
 """
 
 
@@ -251,14 +245,11 @@ def dimensions_from(
     """Turn named limits into the dimensions that enforce them.
 
     Pass the limits your provider actually gives you and leave the rest alone.
-    A provider that meters input and output on one combined bucket gives you a
-    `tpm` and nothing else; one that meters them apart gives you `input_tpm`
-    and `output_tpm`. Nothing here assumes which, because that is a fact about
-    a provider and this function is about your numbers.
+    A provider metering input and output on one bucket gives you a `tpm`; one
+    metering them apart gives you `input_tpm` and `output_tpm`.
 
-    This library ships no limit figures of its own. Yours are on your
-    provider's own limits page, and they are the only ones that are true for
-    your account.
+    This library ships no limit figures of its own. Yours are on your provider's
+    own limits page and are the only ones true for your account.
 
     Args:
         rpm: Requests per minute.
@@ -266,9 +257,8 @@ def dimensions_from(
         tpm: Tokens per minute, counting input and output together.
         input_tpm: Input tokens per minute, when metered on their own.
         output_tpm: Output tokens per minute, when metered on their own.
-        concurrency: How many requests may be in flight at once. Not usually
-            published, and worth setting anyway: it is the limit that protects
-            the provider's latency rather than its accounting.
+        concurrency: How many requests may be in flight at once. Rarely
+            published, and worth setting anyway.
 
     Example:
         >>> found = dimensions_from(rpm=1_000, input_tpm=2_000_000, output_tpm=400_000)
@@ -304,9 +294,7 @@ def _combine(
     """Join dimensions passed as objects with those named as limits.
 
     Raises:
-        ConfigurationError: if the same limit arrives both ways. Two figures
-            for one limit have no honest resolution, and silently preferring
-            one would enforce a number the caller can see they did not ask for.
+        ConfigurationError: if the same limit arrives both ways.
     """
     clash = {d.name for d in built} & {d.name for d in named}
     if clash:
@@ -325,8 +313,7 @@ def _combine(
 class Snapshot:
     """How full everything is right now, for one scope.
 
-    Cheap enough for a health check, and it reserves nothing, so calling it on
-    a timer cannot affect what gets admitted.
+    Reserves nothing, so calling it on a timer cannot affect what is admitted.
 
     Example:
         >>> from spillway.dimensions.rate import Rate
@@ -347,15 +334,11 @@ class Spillway:
 
     Hold one for the life of the process and share it across tasks. Every
     argument has a default, and `Spillway()` with none is valid: it tracks and
-    reports and never refuses anything, which is a reasonable first step for
-    someone gathering evidence before choosing limits.
+    reports and never refuses anything.
 
-    A request that finds no room waits for it rather than failing, for up to
-    `default_timeout` seconds, because capacity that is full now is usually
-    free shortly and a caller would rather wait than handle an error. Waiters
-    are served highest priority first and, within a priority, in the order they
-    arrived. Pass `timeout=0` for a request that should be refused rather than
-    delayed.
+    A request that finds no room waits for up to `default_timeout` seconds
+    rather than failing. Waiters are served highest priority first and, within a
+    priority, in arrival order. Pass `timeout=0` to be refused instead.
 
     Args:
         dimensions: The limits to enforce. Empty means enforce nothing.
@@ -365,23 +348,18 @@ class Spillway:
         scope: The scope used when a caller names none.
         estimator: How to predict what a request will cost. Defaults to
             reserving the output maximum the caller allowed, which is safe and
-            expensive. An estimator that learns from settled requests reserves
-            far less for the same safety, once it has a history to read.
-        provider: Whose accounting rules to apply, as an adapter or as the
-            name of one that ships. It decides how a reservation is adjusted
-            before it is taken and how a response is read at settlement.
-            Without one, a reservation is taken exactly as estimated and
+            expensive. See `for_provider` for the learning default.
+        provider: Whose accounting rules to apply, as an adapter or the name of
+            one that ships. Decides how a reservation is adjusted before it is
+            taken and how a response is read at settlement. Without one,
             `lease.settle_from` has nothing to read a response with.
         default_timeout: How many seconds to wait for capacity when a caller
             names neither a timeout nor a deadline. Zero refuses rather than
             waits. None waits for as long as it takes.
-        queue_capacity: How many requests may wait in each priority band. Per
-            band rather than shared, so a flood of batch work cannot consume
-            the slots an interactive request needs.
+        queue_capacity: How many requests may wait in each priority band.
         queue_full_policy: What a full band does with a new arrival. "reject"
             refuses it. "shed_lowest" drops the lowest priority waiter to make
-            room for a higher priority one, and refuses when the arrival is
-            itself the lowest.
+            room, and refuses when the arrival is itself the lowest.
         rpm: Requests per minute, if your provider gives you one.
         rpd: Requests per day.
         tpm: Tokens per minute, counting input and output together.
@@ -389,11 +367,8 @@ class Spillway:
         output_tpm: Output tokens per minute, when metered on their own.
         concurrency: How many requests may be in flight at once.
 
-    The last six are the same thing as building the matching dimensions by
-    hand and passing them to `dimensions`, and they exist because naming a
-    figure you read off your provider's own page should not require learning
-    what a dimension is first. This library ships no limit figures of its
-    own: yours are the only ones true for your account.
+    The last six build the matching dimensions for you. This library ships no
+    limit figures of its own: yours are the only ones true for your account.
 
     Example:
         >>> import asyncio
@@ -489,16 +464,13 @@ class Spillway:
     ) -> Spillway:
         """Build a limiter that knows how one provider counts.
 
-        The same as calling `Spillway(provider=...)`, with one difference that
-        is worth the separate name: it defaults to the estimator that learns
-        what each route really produces, rather than to the one that reserves
-        whatever maximum the caller allowed.
+        The same as `Spillway(provider=...)`, except that it defaults to the
+        estimator that learns what each route really produces rather than the
+        one that reserves whatever maximum the caller allowed.
 
-        That default is safe from cold. Below its sample threshold the learning
-        estimator defers to the requested maximum, so a fresh process behaves
-        exactly like the conservative one and improves as it watches. It is not
-        the default on `Spillway()` itself because that would change the
-        behaviour of every limiter built before this existed.
+        Safe from cold: below its sample threshold the learning estimator defers
+        to the requested maximum, so a fresh process behaves like the
+        conservative one and improves as it watches.
 
         Args:
             provider: An adapter, or the name of one that ships.
@@ -528,9 +500,8 @@ class Spillway:
             >>> [dimension.name for dimension in limiter.dimensions]
             ['rpm']
 
-            Naming no limits is valid and means observe without limiting,
-            which is the intended first step: watch real traffic, read the
-            snapshot, then set a limit you can defend.
+            Naming no limits observes without limiting, which is the intended
+            first step: watch real traffic, then set a limit you can defend.
 
             >>> Spillway.for_provider("openai").dimensions
             ()
@@ -637,10 +608,8 @@ class Spillway:
                 exclusive with `timeout`.
             tags: Whatever the estimator should route on, such as
                 `{"task": "summarise"}`. Nothing here affects admission
-                directly. It exists because output length is close to
-                unpredictable across every call to a model and quite
-                predictable within one task, so naming the task is usually
-                worth more than any amount of cleverness elsewhere.
+                directly. Output length is far more predictable within one task
+                than across all of them, so naming the task is worth doing.
             weight: Reserved for fair sharing, which does not exist yet.
 
         Returns:
@@ -649,9 +618,8 @@ class Spillway:
         Raises:
             ConfigurationError: if both `timeout` and `deadline` are given.
 
-        The last argument is accepted and unused. It is in the signature now so
-        that the shape a caller writes against, and the shape an editor shows
-        them, does not change when it starts working.
+        `weight` is accepted and unused. It is in the signature now so the
+        shape a caller writes against does not change when it starts working.
         """
         if timeout is not None and deadline is not None:
             message = (
@@ -684,9 +652,8 @@ class Spillway:
         Returns:
             A snapshot keyed by dimension name.
 
-        Limits come from the dimensions rather than from the store, so a
-        dimension that has never been claimed against reports as empty out of
-        its real limit instead of as empty out of nothing.
+        Limits come from the dimensions rather than the store, so one never
+        claimed against reports as empty out of its real limit, not out of zero.
         """
         resolved = Scope.of(scope if scope is not None else self._default_scope)
         name_of_key = {claim_key(resolved, d.name): d for d in self._dimensions}
@@ -758,18 +725,14 @@ class Spillway:
     ) -> Lease:
         """Ask the store for the whole batch once, and report what happened.
 
-        One attempt, no waiting. Both the direct path and the dispatcher go
-        through here, so a request that waited is admitted by exactly the same
-        code as one that did not.
-
-        The wait and the queue position are passed in rather than worked out
-        here, because this is the one place that does not know whether there
-        was a queue at all.
+        One attempt, no waiting. Both the direct path and the dispatcher come
+        through here, so a request that waited is admitted by the same code as
+        one that did not, and neither knows whether there was a queue.
 
         Raises:
-            AdmissionDenied: if any dimension has no room. It carries the
-                binding dimension and how long until it would fit, which is
-                what a waiter is scheduled on.
+            AdmissionDenied: if any dimension has no room. Carries the binding
+                dimension and how long until it would fit, which is what a
+                waiter is then scheduled on.
         """
         result = await self._store.reserve(
             claims,
@@ -828,9 +791,9 @@ class Spillway:
     ) -> float | None:
         """When to stop waiting, on the limiter's clock.
 
-        A deadline that has already passed, which includes a timeout of zero,
-        means the caller asked not to wait, and the refusal reaches them
-        unchanged rather than dressed up as a timeout.
+        A deadline already passed, which includes a timeout of zero, means the
+        caller asked not to wait, so the refusal reaches them unchanged rather
+        than as a timeout.
 
         Returns:
             The moment to give up, or None to wait for as long as it takes.
@@ -846,10 +809,9 @@ class Spillway:
     def _learn_from(self, context: RequestContext, reserved: Cost) -> Callable[[Cost], None]:
         """Build the callback that tells the estimator how wrong it was.
 
-        Recorded whether or not the estimator produced this reservation. A
-        caller who passed an explicit estimate still generated a real number of
-        output tokens on that route, and skipping those would leave the
-        estimator blind exactly when a caller mixes the two.
+        Recorded whether or not the estimator produced this reservation. An
+        explicit estimate still generated real output on that route, and
+        skipping those would blind the estimator when a caller mixes the two.
         """
 
         def learn(actual: Cost) -> None:
@@ -876,9 +838,8 @@ class Spillway:
     ) -> Lease:
         """Reserve `reserved` across every dimension, waiting if allowed to.
 
-        The reservation is attempted directly first and the queue is only
-        reached on a refusal, so the case where there is room, which is nearly
-        every case, pays nothing at all for the machinery below.
+        Attempted directly first, reaching the queue only on a refusal, so the
+        usual case where there is room pays nothing for the machinery below.
 
         Raises:
             AdmissionDenied: if there is no room and none arrives in time, or
@@ -931,9 +892,8 @@ class Spillway:
         """Queue and wait until the dispatcher has an answer.
 
         A cancelled caller takes itself out of the queue on the way past. The
-        dispatcher would eventually notice and drop it, but not before it has
-        been selected, and a waiter nobody is listening for still holds its
-        band's head against everyone behind it.
+        dispatcher would notice eventually, but not before selecting it, and a
+        waiter nobody is listening for holds its band's head against the rest.
 
         Raises:
             AdmissionDenied: if the queue itself has no room for this waiter.
@@ -1066,18 +1026,14 @@ class AdmitContext:
     def _reserved(self, context: RequestContext) -> Cost:
         """Work out what to reserve, from the caller's estimate or the limiter's.
 
-        Once per acquisition, never once per dispatch attempt. A request that
-        waited reserves what it asked for when it arrived, because a prediction
-        that moved while it queued would mean its place in the queue was earned
-        against a different request.
+        Once per acquisition, never once per dispatch attempt: a request that
+        waited reserves what it asked for when it arrived, or its place in the
+        queue was earned against a different request.
 
-        The provider gets the last word, and it is applied to a caller's
-        explicit estimate as readily as to a predicted one. A provider that
-        charges the requested maximum at admission charges it whoever did the
-        predicting, and a reservation smaller than the one the provider itself
-        takes means believing in headroom the provider does not agree exists.
-        That produces rate limit responses nothing predicted, which is the
-        worst outcome available to a limiter.
+        The provider gets the last word, on an explicit estimate as readily as a
+        predicted one. Reserving less than the provider itself charges means
+        believing in headroom it does not agree exists, which produces rate
+        limit responses nothing predicted.
         """
         estimate = self._estimate
         if estimate is None:
@@ -1109,23 +1065,20 @@ class AdmitContext:
     ) -> Literal[False]:
         """Give the capacity back, whichever way the block ended.
 
-        Never suppresses. The annotation says `False` rather than `bool` so
-        that a type checker knows a `return` inside the block is reached, which
-        it cannot know from `bool` alone.
+        Never suppresses. The annotation says `False` rather than `bool` so a
+        type checker knows a `return` inside the block is reached.
 
-        Four endings, and each one has a different right answer.
+        Three endings:
 
-        The block raised, or the task was cancelled: the reservation goes back
-        whole, because nothing was consumed. Cancellation reaches here as an
-        exception like any other, and the release path awaits nothing, so it
-        cannot itself be interrupted partway through.
+        Raised or cancelled, the reservation goes back whole. Cancellation
+        arrives as an exception like any other and the release path awaits
+        nothing, so it cannot be interrupted partway through.
 
-        The block succeeded and settled: nothing left to do.
+        Succeeded and settled, nothing to do.
 
-        The block succeeded and did not settle: settle at the full reserved
-        amount, which is pessimistic and safe, and say so once. Nothing will
-        ever calibrate for a caller who never reports real costs, so every
-        request keeps paying the estimate's full price.
+        Succeeded and did not settle, it settles at the full reserved amount and
+        says so once. Nothing calibrates for a caller who never reports real
+        costs, so every request keeps paying the estimate's full price.
         """
         lease = self._lease
         if lease is None or lease.state is not LeaseState.ACQUIRED:
