@@ -1,9 +1,8 @@
 """Everything this library raises.
 
-The whole hierarchy is defined here, including members nothing raises yet, so
-that a caller can write the `except` clause they need without waiting for the
-feature that produces it. Adding an exception class later is a change every
-user has to notice; adding one now costs a few lines.
+The whole hierarchy is defined here, including members nothing raises yet, so a
+caller can write the `except` clause they need before the feature that produces
+it exists. Each of those says which one it is waiting for.
 
 Every message names the fix, not just the problem.
 """
@@ -29,17 +28,17 @@ class SpillwayError(Exception):
 class AdmissionDenied(SpillwayError):
     """The request cannot proceed.
 
-    Carries enough for the caller to act rather than merely fail: which
-    dimension ran out, and how long until it would not have.
+    Carries which dimension ran out and how long until it would not have, so a
+    caller can act rather than merely fail.
 
     Attributes:
         retry_after: Seconds until the binding dimension could admit this
             request, or None when waiting would not help.
         binding_dimension: The name of the dimension that ran out, or None if
             the refusal was not attributable to one.
-        explanation: How full every limit was when the refusal happened.
-            Typed loosely here so that the exception hierarchy stays free of
-            imports from the rest of the library.
+        explanation: How full every limit was when the refusal happened. Typed
+            loosely to keep this module free of imports from the rest of the
+            library.
 
     Example:
         >>> error = AdmissionDenied(
@@ -71,9 +70,8 @@ class AdmissionTimeout(AdmissionDenied):
 class Shed(AdmissionDenied):
     """Dropped rather than queued, because the work was marked sheddable.
 
-    Distinct from the other refusals so a caller can retry later instead of
-    treating it as an error. Nothing is wrong; the system is busy and this
-    request said it could wait.
+    Distinct from the other refusals so a caller can retry later rather than
+    treat it as an error. Nothing is wrong; the system is busy.
     """
 
 
@@ -94,18 +92,18 @@ class StoreError(SpillwayError):
 
 
 class StoreUnavailable(StoreError):
-    """The store could not be reached.
+    """The store could not be reached. Raised once there is a coordinated store.
 
-    Only raised when the limiter is configured to propagate store failures. By
-    default it degrades and keeps serving instead.
+    Only when the limiter is configured to propagate store failures. By default
+    it degrades and keeps serving.
     """
 
 
 class StoreCorruption(StoreError):
     """The store holds something this library did not write.
 
-    Usually a namespace collision with another application, or a version of
-    this library that wrote a different key layout.
+    Raised once there is a coordinated store. Usually a namespace collision with
+    another application, or a different key layout from another version.
     """
 
 
@@ -116,25 +114,23 @@ class LeaseError(SpillwayError):
 class LeaseAlreadySettled(LeaseError):
     """This lease was settled or abandoned already.
 
-    Raised rather than ignored, because a second settlement would count the
-    same request twice and quietly corrupt every limit it touched.
+    Raised rather than ignored: a second settlement would count the same request
+    twice and quietly corrupt every limit it touched.
     """
 
 
 class LeaseExpired(LeaseError):
     """The lease outlived its expiry and its capacity was reclaimed.
 
-    The call it covered ran longer than the limiter was told to expect. Its
-    capacity is already back in circulation, so it cannot be settled.
+    The call ran longer than the limiter was told to expect, so its capacity is
+    already back in circulation and cannot be settled.
     """
 
 
 class MissingExtra(SpillwayError):
     """An optional dependency is needed and is not installed.
 
-    The message carries the exact command that fixes it, because a caller who
-    hits this is trying to get something working and should not have to go and
-    find out how.
+    The message carries the exact install command.
 
     Example:
         >>> print(MissingExtra("RedisStore", extra="redis"))
