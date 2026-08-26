@@ -1,41 +1,25 @@
 """The decision arithmetic, and nothing else.
 
-Every function here is pure. None of them reads a clock, touches a store, owns
-state, or mutates an argument. The current time arrives as a parameter and new
-state comes back as a return value. Three things depend on that:
+Every function here is pure: the current time arrives as a parameter, new state
+comes back as a return value, and nothing reads a clock, touches a store or
+mutates an argument. That is what lets the synchronous and asynchronous entry
+points share one implementation, and what lets the coordinated store's Lua
+version be tested against this one.
 
-- A synchronous caller and an asynchronous caller can share one implementation,
-  so the two entry points are thin drivers rather than two engines with two sets
-  of bugs.
-- The whole decision path is testable without an event loop.
-- A coordinated store has to run this same arithmetic inside a server side
-  script, in another language, and a differential test can only assert the two
-  agree if this side is a plain function over plain numbers.
+The Lua port sets the house style. No comprehensions, no exceptions, no
+operation that exists in Python and not in a small scripting language, and every
+value a float, because that is the only numeric type the other side will have.
 
-That last point sets the house style for this module: no comprehensions, no
-exceptions, no clever expressions, no operations that exist in Python and not in
-a small scripting language. Every value is a float, because that is the only
-numeric type the other implementation will have.
+Rate limits use the generic cell rate algorithm. The whole state for a key is
+one float, `tat_ms`, the theoretical arrival time, which is the moment the key
+will have paid for everything charged to it so far. Two derived values recur
+below and the caller computes both: `emission_interval_ms` is the time one unit
+of cost buys, `window_ms / limit`, and `burst_ms` is how far ahead of now the
+arrival time may run.
 
-## Rate accounting
-
-Rate limits use the generic cell rate algorithm. The entire state for one key is
-a single float, the theoretical arrival time, which is the moment the key will
-have fully paid for everything charged to it so far. It is O(1) in memory no
-matter how much traffic passes, and it is smoother than a fixed window, which
-admits a full limit at the end of one window and again at the start of the next.
-
-Two derived values, both computed by the caller:
-
-    emission_interval_ms = window_ms / limit    time one unit of cost buys
-    burst_ms             = window_ms            how far ahead a key may run
-
-## Gauge accounting
-
-Gauges are the other kind of limit: a value currently held, released explicitly
-when the request that took it finishes. Concurrency is one. They are genuinely
-different from rate keys, which are never released and simply age out, and
-conflating the two produces either leaked concurrency or double counted rate.
+Gauges are the other kind of limit: a value held until the request that took it
+finishes. The two are not interchangeable, and conflating them leaks concurrency
+or double counts rate.
 """
 
 from __future__ import annotations
@@ -50,24 +34,15 @@ def gcra_reserve(
 ) -> tuple[bool, float, float]:
     """Charge `cost` against a rate key, if it fits.
 
-    Args:
-        tat_ms: The key's stored theoretical arrival time.
-        now_ms: The current time.
-        cost: How many units to charge.
-        emission_interval_ms: Time one unit of cost buys.
-        burst_ms: How far ahead of now the arrival time may run.
+    Pulls the arrival time up to now before charging, so a key idle for an hour
+    gets one window of allowance rather than an hour of it.
 
     Returns:
         Whether it was granted, the arrival time to store, and how long until a
-        refused charge would fit. On a refusal the arrival time comes back
-        exactly as it went in, so a caller that stores the result unconditionally
-        still mutates nothing. That is what makes an all or nothing batch of
-        claims safe to evaluate one at a time.
-
-    The first two lines are what bound a burst. Pulling the arrival time up to
-    now before charging means a key that has been idle for an hour gets one
-    window of allowance rather than an hour of it, which is the difference
-    between a limiter and a counter that occasionally lets everything through.
+        refused charge would fit. A refusal returns the arrival time exactly as
+        it went in, so a caller that stores the result unconditionally still
+        mutates nothing. That is what makes an all or nothing batch of claims
+        safe to evaluate one at a time.
 
     Example:
         A limit of two per second, so one unit of cost buys 500ms and a key may
@@ -104,26 +79,17 @@ def gcra_credit(
     amount: float,
     emission_interval_ms: float,
 ) -> float:
-    """Return unused capacity to a rate key.
+    """Return unused capacity to a rate key, by rewinding its arrival time.
 
-    Crediting back is a rewind of the arrival time. This is what makes reserving
-    conservatively affordable: capacity held on an estimate and not used is
-    returned within the request's own lifetime, so it is available to the next
-    caller rather than wasted until the window rolls.
+    This is what makes reserving conservatively affordable: capacity held on an
+    estimate and not used comes back within the request's own lifetime rather
+    than when the window rolls.
 
-    The rewind stops at the present moment. That floor is not what bounds a
-    burst, since `gcra_reserve` pulls the arrival time up to now before charging
-    anything and would ignore a value in the past anyway. It is here to keep the
-    stored number bounded: a long lived key that credited back more than it
-    charged would otherwise drift further into the past for ever, losing float
-    precision as it went and misleading anything that read it directly.
+    The rewind stops at the present moment, which keeps the stored number
+    bounded. A key that credited back more than it charged would otherwise drift
+    into the past for ever and lose float precision as it went.
 
-    Args:
-        tat_ms: The key's stored theoretical arrival time.
-        now_ms: The current time.
-        amount: How many units to give back. Never negative; an overrun goes
-            through `gcra_debt` instead.
-        emission_interval_ms: Time one unit of cost buys.
+    `amount` is never negative. An overrun goes through `gcra_debt` instead.
 
     Returns:
         The arrival time to store.
@@ -155,21 +121,12 @@ def gcra_debt(
 ) -> float:
     """Charge a rate key for capacity it used beyond what it reserved.
 
-    An overrun cannot be refused, because the tokens are already spent. It is
-    recorded as debt instead: the arrival time moves further forward, so the
-    excess is repaid out of the following window automatically.
+    An overrun cannot be refused, because the tokens are already spent. It
+    becomes debt instead: the arrival time moves forward and the excess is
+    repaid out of the following window.
 
-    The clamp bounds the debt at one extra window. Without it a single
-    pathological request could push the arrival time so far ahead that the key
-    admits nothing for hours, which turns one bad estimate into an outage.
-
-    Args:
-        tat_ms: The key's stored theoretical arrival time.
-        now_ms: The current time.
-        amount: How many units were used beyond the reservation.
-        emission_interval_ms: Time one unit of cost buys.
-        window_ms: The limit's window.
-        burst_ms: How far ahead of now the arrival time may run.
+    Clamped at one extra window, so a single pathological request cannot push
+    the key far enough ahead to silence it for hours.
 
     Returns:
         The arrival time to store.
@@ -180,8 +137,7 @@ def gcra_debt(
         >>> gcra_debt(1000.0, 0.0, 1.0, 500.0, 1000.0, 1000.0)
         1500.0
 
-        A ruinous one is capped at one window beyond the burst allowance, so
-        the key is silent for a while rather than for ever.
+        A ruinous one is capped at one window beyond the burst allowance.
 
         >>> gcra_debt(1000.0, 0.0, 100.0, 500.0, 1000.0, 1000.0)
         2000.0
@@ -196,15 +152,9 @@ def gcra_debt(
 def gauge_reserve(held: float, cost: float, limit: float) -> tuple[bool, float]:
     """Take `cost` from a gauge, if it fits.
 
-    Args:
-        held: How much of the gauge is currently held.
-        cost: How much to take.
-        limit: The most that may be held at once.
-
     Returns:
-        Whether it was granted, and the value to store. As with a rate charge, a
-        refusal returns the held value unchanged, so a caller evaluating a batch
-        of claims one at a time still mutates nothing when one of them refuses.
+        Whether it was granted, and the value to store. A refusal returns the
+        held value unchanged, for the same reason a refused rate charge does.
 
     Example:
         >>> gauge_reserve(63.0, 1.0, 64.0)
@@ -219,15 +169,11 @@ def gauge_reserve(held: float, cost: float, limit: float) -> tuple[bool, float]:
 
 
 def gauge_release(held: float, amount: float) -> float:
-    """Give `amount` back to a gauge.
+    """Give `amount` back to a gauge, clamped at zero.
 
-    Clamped at zero. A gauge below zero would admit more than its limit, and
-    accumulated floating point error over millions of settlements is a real way
-    to get there without any single mistake.
-
-    Args:
-        held: How much of the gauge is currently held.
-        amount: How much to give back.
+    A gauge below zero would admit more than its limit, and floating point error
+    accumulated over millions of settlements is a real way to get there without
+    any single mistake.
 
     Returns:
         The value to store.

@@ -3,6 +3,15 @@
 Notable changes to this project, newest first. This project uses semantic versioning. While the
 version is below 0.1, any release may change anything.
 
+## Unreleased
+
+### Changed
+
+- Documentation across the package reduced to what a caller needs: what a thing does, what it
+  returns, what it raises, and the units and constraints that are not already in the signature.
+  Every runnable example is kept, because they are tests. No behaviour, no signature and no
+  exported name changed.
+
 ## 0.0.5 (2026-08-23)
 
 ### Added
