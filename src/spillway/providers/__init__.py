@@ -1,9 +1,7 @@
 """One provider's accounting rules, encoded so nobody has to read three pages.
 
-An adapter says how a provider counts. It says nothing about how much you are
-allowed, because a rate limit belongs to an account rather than to a provider
-and the true figure lives in that account's own console. You name your limits;
-these describe how to charge against them.
+An adapter says how a provider counts, never how much you are allowed. You name
+your limits; these describe how to charge against them.
 
     from spillway import providers
 

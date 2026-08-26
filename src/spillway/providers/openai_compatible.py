@@ -3,13 +3,12 @@
 vLLM, SGLang, Together, Fireworks, Groq, DeepInfra, LM Studio, Ollama, and a
 model somebody is serving on their own hardware this afternoon.
 
-Detection by protocol alone would call all of these OpenAI, which is right
-about the wire format and wrong about everything that matters. A local engine
-does not charge the requested maximum against anything, does not report the
-same usage categories, and does not send the same headers, so this is where a
-client speaking the right schema against the wrong host lands.
+Detection by protocol alone would call all of these OpenAI, which is right about
+the wire format and wrong about the accounting. A local engine charges no
+requested maximum, reports different usage categories and sends different
+headers, so a client speaking the right schema against another host lands here.
 
-It assumes nothing. That is the whole point of it.
+It assumes nothing, which is the point of it.
 """
 
 from __future__ import annotations
@@ -28,9 +27,8 @@ class OpenAICompatible:
     Args:
         metrics_url: Where a self hosted engine exposes its own serving
             metrics, such as cache occupancy and queue depth. Accepted and
-            unused. It is the seam through which reading a real engine's state
-            would arrive, and leaving the argument present means that shape is
-            not accidentally designed out.
+            unused: it is the seam a later release reads engine state through,
+            and it is present now so that shape is not designed out.
 
     Example:
         >>> adapter = OpenAICompatible()

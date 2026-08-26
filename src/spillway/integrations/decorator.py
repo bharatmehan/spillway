@@ -1,19 +1,16 @@
 """Admitting around a function, when there is no client to instrument.
 
-Reach for this third, and the ordering matters. An instrumented client covers
-every call through that client with nothing at the call sites. `admit()` covers
-a single call where you want the lease in your hand. This covers the case
-neither does: work that calls a model through something Spillway has never
-heard of, or a unit of work that is worth limiting as a whole rather than one
-request at a time.
+Reach for this third. An instrumented client covers every call through it with
+nothing at the call sites, `admit()` covers a single call where you want the
+lease in your hand, and this covers what neither does: a model reached through
+something unrecognised, or work worth limiting whole rather than per request.
 
     @admitted(limiter, max_tokens=2_000)
     async def summarise(document: str) -> str:
         ...
 
 If there is a client to instrument, instrument it instead. This has to be
-written at every function it applies to, which is the cost the instrumented
-client exists to avoid.
+written at every function it applies to.
 """
 
 from __future__ import annotations

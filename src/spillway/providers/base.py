@@ -1,18 +1,14 @@
 """What every provider adapter has to answer, and nothing more.
 
-Providers do not count the same way, and the differences are not cosmetic. One
-meters requests, input tokens and output tokens on three separate buckets and
-charges only the tokens a call actually generated. Another puts input and output
-in one bucket and charges the maximum length the caller allowed, whether or not
-it was reached. Reserving the wrong one of those does not produce a slightly
-worse limit, it produces rate limit responses the library completely failed to
-predict.
+Providers do not count the same way. One meters requests, input and output on
+three separate buckets and charges only what a call generated. Another puts
+input and output in one bucket and charges the maximum the caller allowed,
+reached or not. Reserving the wrong one produces rate limit responses the
+library completely failed to predict.
 
-An adapter is where one provider's rules live. Half of it reads a request, so an
-instrumented client can work out what a call will cost before making it, and
-half of it reads a response, so settlement can replace the estimate with the
-truth. Neither half talks to a network: an adapter is handed what the caller
-passed and what the provider returned, and it does arithmetic.
+An adapter is where one provider's rules live. Half reads a request, so a call's
+cost is known before making it; half reads a response, so settlement can replace
+the estimate with the truth. Neither half touches a network.
 """
 
 from __future__ import annotations
@@ -29,12 +25,9 @@ from spillway.estimators.base import RequestContext
 class Outcome(Enum):
     """What became of one request, in the terms a controller cares about.
 
-    Five categories, and the distinction that matters most is between the two
-    that mean "the provider is full" and the two that do not. A controller
-    reads this to decide whether to back off, and backing off is the wrong
-    answer to a malformed request or an exhausted budget: neither of them ever
-    clears, so the limit walks down and stays down against a condition that
-    waiting cannot fix.
+    What matters is the split between the two meaning "the provider is full"
+    and the rest. Backing off is the wrong answer to a malformed request or an
+    exhausted budget: neither clears, so the limit walks down and stays down.
 
     Example:
         >>> Outcome.RATE_LIMITED.value
@@ -73,11 +66,9 @@ class Outcome(Enum):
 class ProviderState:
     """What a provider said about its own limits, on one response.
 
-    Providers that report this turn limit discovery from a guess into a
-    reading, which is what the header driven controller exists to use. An
-    adapter for a provider that reports nothing returns no state at all rather
-    than an empty one, so the difference between "nothing left" and "not told"
-    is never lost.
+    An adapter for a provider that reports nothing returns no state at all
+    rather than an empty one, so "nothing left" and "not told" stay distinct.
+    Read by the header driven controller, which arrives in a later release.
 
     Attributes:
         limits: The configured limit per dimension name.
@@ -108,10 +99,8 @@ class ProviderState:
         """What fraction of `name` is still free, or nothing if it was not reported.
 
         Returns:
-            A fraction between zero and one, or None when either the limit or
-            the remaining figure is missing, or the limit is zero. A limit of
-            zero has no meaningful fraction free and reporting one would be
-            invented.
+            A fraction between zero and one, or None when the limit or the
+            remaining figure is missing, or the limit is zero.
         """
         limit = self.limits.get(name)
         left = self.remaining.get(name)
@@ -124,34 +113,26 @@ class ProviderState:
 class ProviderAdapter(Protocol):
     """One provider's accounting rules, and how to recognise its client.
 
-    Implement it structurally. Nothing needs to be imported or subclassed, and
-    the shared conformance suite runs against every adapter equally, including
-    one written outside this repository.
+    Implement it structurally: nothing needs importing or subclassing, and the
+    shared conformance suite runs against every adapter equally, including one
+    written outside this repository.
 
-    The four attributes are recognition. The module of a client's class names
-    the wire protocol it speaks, the hosts say which clients the published
-    limits actually apply to, and the endpoints say which methods an
-    instrumented client replaces. A method that is not listed is forwarded
-    untouched, which is the safe direction to fail: something the adapter has
-    never heard of behaves exactly as it did before.
+    The four attributes are recognition. A method not listed in `endpoints` is
+    forwarded untouched, which is the safe direction to fail.
 
     **An adapter has no opinion about what your limits are.** It encodes how a
-    provider counts, never how much you are allowed, because a limit belongs to
-    an account rather than to a provider and the true figure lives in that
-    account's own console. The caller names their limits and this describes how
-    to charge against them.
+    provider counts, never how much you are allowed. The caller names their
+    limits and this describes how to charge against them.
 
     Attributes:
         name: What this provider is called, in errors and in messages.
         client_module: The top level module of a client speaking this protocol.
-        official_hosts: Base URLs the published limits apply to. A client
-            pointed anywhere else speaks the same protocol against a different
-            service, and asserting this provider's limits over it would be
-            confidently wrong.
+        official_hosts: Base URLs this provider's accounting applies to. A
+            client pointed elsewhere speaks the same protocol against a
+            different service.
         endpoints: Dotted method paths to instrument, such as
-            `messages.create`. Only methods that reach the network belong here.
-            Listing one that delegates to another would admit the same call
-            twice and halve the limit.
+            `messages.create`. Only methods that reach the network: listing one
+            that delegates to another admits the same call twice.
 
     Example:
         A minimal adapter for a service that meters requests and nothing else.
@@ -194,11 +175,9 @@ class ProviderAdapter(Protocol):
     def request_from(self, endpoint: str, kwargs: Mapping[str, object]) -> RequestContext:
         """Read one intercepted call into the context an estimator understands.
 
-        The mirror of `usage_from`. A caller writing an admission by hand
-        passes the prompt and the requested maximum in themselves; an
-        instrumented client has to recover them from the call, and every
-        provider names them differently, sometimes differently per endpoint.
-        That is why this is the adapter's job.
+        The mirror of `usage_from`. Every provider names the prompt and the
+        requested maximum differently, sometimes differently per endpoint,
+        which is why recovering them is the adapter's job.
 
         Args:
             endpoint: Which of `endpoints` was called.
@@ -210,14 +189,12 @@ class ProviderAdapter(Protocol):
     def adjust(self, cost: Cost, context: RequestContext) -> Cost:
         """Apply this provider's admission time accounting to a reservation.
 
-        Where a provider charges the requested maximum output length whether or
-        not it is reached, this is where the predicted output is replaced by
-        that maximum. Matching the provider's own accounting matters more than
-        being clever: reserving less than the provider does means believing in
-        headroom the provider does not agree exists.
+        Where a provider charges the requested maximum whether or not it is
+        reached, the predicted output is replaced by that maximum here.
+        Reserving less than the provider does means believing in headroom it
+        does not agree exists.
 
-        Must be idempotent. The conformance suite asserts it, because a
-        reservation is built once and may be inspected more than once.
+        Must be idempotent, and the conformance suite asserts it.
         """
         ...
 
@@ -225,9 +202,8 @@ class ProviderAdapter(Protocol):
         """Pull what a call really cost out of whatever the provider returned.
 
         Accepts a native response object, a plain mapping, or anything else
-        carrying the fields. Typed as `object` rather than as a union because
-        the set of things a provider might hand back is not closed, and the
-        adapter narrows it itself.
+        carrying the fields. Typed as `object` because the set of things a
+        provider might return is not closed; the adapter narrows it itself.
 
         Raises:
             ValueError: if no usage can be found. The caller settles at the
@@ -239,8 +215,8 @@ class ProviderAdapter(Protocol):
         """Say what happened, in terms a controller can act on.
 
         The one thing never to get wrong: a client error is not congestion.
-        Reading a malformed request as overload makes the limiter collapse for
-        a reason no amount of backing off can fix.
+        Reading a malformed request as overload collapses the limiter for a
+        reason no amount of backing off can fix.
         """
         ...
 
@@ -248,9 +224,8 @@ class ProviderAdapter(Protocol):
         """Read the provider's own account of its limits, if it gives one.
 
         Returns:
-            The state, or None for a provider that reports nothing. None is the
-            honest answer and the header driven controller stands down on it,
-            rather than treating silence as an empty budget.
+            The state, or None for a provider that reports nothing, so silence
+            is never read as an empty budget.
         """
         ...
 
@@ -258,9 +233,8 @@ class ProviderAdapter(Protocol):
         """How many seconds the provider asked to be left alone for.
 
         Returns:
-            Seconds, never negative, or None when the provider did not say. A
-            refusal that will not clear on its own returns None rather than
-            zero, because zero would invite an immediate retry.
+            Seconds, never negative, or None when the provider did not say.
+            None rather than zero, which would invite an immediate retry.
         """
         ...
 
@@ -268,10 +242,8 @@ class ProviderAdapter(Protocol):
         """Whether the requested maximum is charged at admission.
 
         The single most consequential fact about a provider. False means the
-        predicted output quantile is fully usable and reserving the maximum
-        would waste most of the headroom. True means the opposite, and the
-        library's output prediction does not help against this provider's rate
-        limit at all, which the documentation says plainly rather than implying
-        a uniform benefit.
+        predicted output quantile is fully usable. True means output prediction
+        does not help against this provider's rate limit at all, and the
+        documentation says so rather than implying a uniform benefit.
         """
         ...

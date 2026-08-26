@@ -1,21 +1,18 @@
 """How OpenAI counts, and nothing about how much you are allowed.
 
-Almost every rule here is the opposite of the other provider's, which is the
-best argument that an adapter layer is worth having.
+Almost every rule here is the opposite of the other provider's.
 
-Input and output share one token bucket rather than sitting on two, which the
-singular limit header confirms, so a caller names one token limit rather than
-two.
+Input and output share one token bucket, which the singular limit header
+confirms, so a caller names one token limit rather than two.
 
 Two endpoints in the same client library name the same three things
-differently. One takes messages and a completion maximum, the other takes an
-input and an output maximum, and their usage objects name the same two counts
-prompt and completion in one case and input and output in the other. No caller
-should be expected to know that, which is why reading the request and reading
-the usage are both the adapter's job.
+differently. One takes messages and a completion maximum, the other an input and
+an output maximum, and their usage objects name the same two counts prompt and
+completion in one case, input and output in the other. Reading the request and
+reading the usage are both the adapter's job because of it.
 
-Reset values are durations rather than timestamps, the opposite convention to
-the other provider.
+Reset values are durations rather than timestamps, again the opposite
+convention.
 """
 
 from __future__ import annotations

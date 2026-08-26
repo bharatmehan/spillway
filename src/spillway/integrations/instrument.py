@@ -119,13 +119,11 @@ def patch(
         ConfigurationError: if the client is already instrumented, if nothing
             recognises it, or if it is synchronous.
 
-    The mechanism, which is smaller than it sounds. Both client libraries
-    expose a public copy that returns the same type and reuses the existing
-    connection pool, and attach their resources as ordinary attributes on
-    ordinary objects. So: copy, then replace the bound methods on the copy's
-    own resources. The returned object genuinely is an instance of the class
-    handed in, which is why editor completion, `isinstance` and strict type
-    checking all keep working without anything having to pretend.
+    The mechanism: both client libraries expose a public copy returning the
+    same type and reusing the connection pool, and attach their resources as
+    ordinary attributes. So copy, then replace the bound methods on the copy's
+    own resources. The result genuinely is an instance of the class handed in,
+    which is why completion, `isinstance` and type checking keep working.
     """
     if getattr(client, HELD_BY, None) is not None:
         message = (

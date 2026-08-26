@@ -3,16 +3,12 @@
 Two questions, and conflating them is the mistake this module exists to avoid.
 
 **What protocol does this client speak?** The top level module of its class
-says so, reliably. That is where most implementations would stop.
+says so, reliably.
 
 **Do that provider's accounting rules apply to it?** Only if it is pointed at
-that provider. A client speaking the OpenAI schema against something that is
-not OpenAI is a hosted inference service or a local engine, and those do not
-charge the requested maximum at admission, do not report the same usage
-categories and do not send the same headers. Applying the named provider's
-rules there would be confidently wrong on the back of a correct protocol
-detection, which is the worst kind of wrong because everything upstream of it
-looks right.
+that provider. A client speaking the OpenAI schema against something else is a
+hosted service or a local engine, charging no requested maximum, reporting
+different usage categories and sending different headers.
 
 So the base URL decides. An official host gets the named adapter, anything else
 gets the generic one, which assumes nothing, and it says so once.
@@ -116,9 +112,9 @@ def adapter_for(client: object) -> ProviderAdapter:
 def is_asynchronous(client: object, adapter: ProviderAdapter) -> bool:
     """Whether this client's calls have to be awaited.
 
-    Decided by asking one of the methods rather than by reading the class
-    name, because a name is a convention and this is a fact. The methods carry
-    a decorator that hides the real function, so it is unwrapped first.
+    Decided by asking one of the methods rather than reading the class name.
+    The methods carry a decorator that hides the real function, so it is
+    unwrapped first.
 
     Returns:
         True when the client is asynchronous, and True when there is nothing

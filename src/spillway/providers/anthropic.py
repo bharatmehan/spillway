@@ -1,20 +1,17 @@
 """How Anthropic counts, and nothing about how much you are allowed.
 
-Three facts drive everything here, all of them verified against the provider's
-current documentation and each with a fixture behind it.
+Three facts drive everything here, each with a fixture behind it.
 
-Requests, input tokens and output tokens sit on three separate buckets rather
-than one combined one, so a caller names up to three limits rather than one.
+Requests, input tokens and output tokens sit on three separate buckets, so a
+caller names up to three limits.
 
-Cache reads do not count toward the input limit on current models, and cache
+Cache reads do not count toward the input limit on current models and cache
 writes do. The input token field counts only what follows the last cache
-breakpoint, so what is charged is that field plus cache creation, and the
-cached read is recorded as its own category rather than added in.
+breakpoint, so the charge is that field plus cache creation, with the cached
+read recorded as its own category.
 
-The requested maximum output length does not factor into output token
-accounting. That is the fact worth the most: it means the predicted quantile is
-fully usable here, and reserving the maximum would waste most of the headroom
-for nothing.
+The requested maximum output length does not factor into output accounting. That
+is the fact worth the most: the predicted quantile is fully usable here.
 """
 
 from __future__ import annotations
@@ -92,8 +89,7 @@ class Anthropic:
         """Read the model, the prompt and the requested maximum off one call.
 
         The system prompt is a separate parameter rather than a message, so
-        counting input from the messages alone would miss it entirely, and a
-        long system prompt is exactly the case where that matters.
+        counting from the messages alone would miss it.
 
         Every endpoint here names its arguments identically, so which one was
         called does not change the answer. The other provider is not so
@@ -129,9 +125,8 @@ class Anthropic:
         """Read what a call really cost.
 
         The input charge is the input token field plus cache creation. Cache
-        reads go into their own category rather than into the input total,
-        because the provider does not count them against the input limit and
-        folding them in would report a charge that was never made.
+        reads go into their own category, because the provider does not count
+        them against the input limit.
 
         Raises:
             ValueError: if there is no usage to read.

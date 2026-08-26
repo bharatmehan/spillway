@@ -1,9 +1,7 @@
 """Saying whose request this is, without threading it through every frame.
 
 An instrumented client has no `admit()` call to pass arguments to, so this is
-how scope and priority reach a limiter at all. That makes it load bearing
-rather than a convenience: it is the difference between multi tenant limiting
-being realistic and being theoretical.
+how scope and priority reach a limiter at all.
 
     @app.middleware("http")
     async def set_scope(request, call_next):

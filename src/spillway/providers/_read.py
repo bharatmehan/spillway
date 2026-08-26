@@ -1,10 +1,9 @@
 """Reading fields off whatever a provider client hands back.
 
-A response is a typed object from a client library, or a plain mapping from a
-test or a raw HTTP call, or an object from a library version that has since
-renamed something. An adapter should not care which, and it must never raise on
-the shape rather than on the substance: a missing usage field means settle at
-the reserved amount and say so, not crash a request that already succeeded.
+A response may be a typed object from a client library, a plain mapping from a
+test or a raw HTTP call, or an object from a version that renamed something. An
+adapter should not care which, and must never raise on the shape rather than the
+substance: a missing usage field settles at the reserved amount and says so.
 """
 
 from __future__ import annotations
@@ -50,9 +49,8 @@ def path(source: object, *names: str) -> object | None:
 def count(value: object) -> int:
     """Read a token count, treating anything unusable as zero.
 
-    Providers send `null` for a category that did not apply, and a count that
-    is absent is a count of none. A negative one is not something to propagate
-    into accounting.
+    Providers send `null` for a category that did not apply, and an absent
+    count is a count of none. A negative one never reaches accounting.
 
     Example:
         >>> count(1024), count(None), count("48"), count(-5), count("many")
