@@ -1,17 +1,11 @@
 """Congestion control for language model API traffic.
 
-Admission control across rate and concurrency, with capacity reserved from an
+Admission control across rate and concurrency. Capacity is reserved from an
 estimate before a call and settled against the real cost after it, so the
-difference goes back immediately rather than at the end of a window.
+difference goes back immediately rather than at the end of a window. A call that
+finds no room waits for it, highest priority first.
 
-A call that finds no room waits for it, highest priority first, rather than
-failing on a limit that will have cleared in a second.
-
-Output length is predicted rather than guessed at. An estimator that has watched
-a route reserves what most of its requests come in under, instead of the maximum
-the caller was willing to allow, which is usually many times larger.
-
-Two lines where the client is built, and every call site is untouched:
+Two lines where the client is built, and every call site untouched:
 
     from anthropic import AsyncAnthropic
     from spillway import Spillway
@@ -20,33 +14,29 @@ Two lines where the client is built, and every call site is untouched:
 
     reply = await client.messages.create(model=..., messages=..., max_tokens=1_024)
 
-The limits are yours. This library ships none of its own, because a rate limit
-belongs to an account rather than to a provider and the true figure lives in
-your provider's own console. Name the ones it gives you: `rpm`, `rpd`, `tpm`,
-`input_tpm`, `output_tpm`, `concurrency`.
-
-Naming none of them admits everything and records what the traffic really costs,
-which is the intended first step:
+The limits are yours. This library ships none of its own. Name the ones your
+provider gives you: `rpm`, `rpd`, `tpm`, `input_tpm`, `output_tpm`,
+`concurrency`. Naming none admits everything and records what the traffic really
+costs, which is the intended first step:
 
     client = Spillway.instrument(AsyncAnthropic())
     ...
     Spillway.of(client).snapshot()
 
-Scope and priority arrive from the surrounding code rather than from every call
-site, which is what makes limiting per tenant realistic:
+Scope and priority arrive from the surrounding code rather than every call site:
 
     with scope_context(f"tenant:{tenant}", priority=Priority.INTERACTIVE):
         ...
 
-And underneath all of it, the admission itself, for a provider with no adapter
-or work that is not an SDK call:
+And underneath it, the admission itself, for a provider with no adapter or work
+that is not an SDK call:
 
     async with limiter.admit(prompt=prompt, max_tokens=1_024) as lease:
         response = await your_client.create(prompt=prompt)
         lease.settle(input=response.usage.input, output=response.usage.output)
 
-This list is curated and small. Anything not named here is reached through an
-explicit submodule import, so what is supported is what an editor offers.
+The export list below is curated and small. Anything not named in it is reached
+through an explicit submodule import.
 """
 
 from importlib.metadata import PackageNotFoundError, version
