@@ -1,13 +1,12 @@
 """Reserve whatever output length the caller said they would allow.
 
 The safe, uninformed baseline, and the default until an estimator has a history
-to read. It is correct and it is expensive: if a caller allows 4,096 tokens and
-the median answer is 300, it holds roughly thirteen times what is used for the
-whole length of the call.
+to read. Correct and expensive: a caller allowing 4,096 tokens whose median
+answer is 300 holds roughly thirteen times what it uses, for the whole call.
 
-It is also the right answer, permanently, against a provider that charges the
-requested maximum against its own limits at admission. Reserving less than the
-provider does buys nothing and guarantees a rate limit response nobody predicted.
+It is also the permanently right answer against a provider that charges the
+requested maximum at admission, where reserving less buys nothing and guarantees
+a rate limit response nobody predicted.
 """
 
 from __future__ import annotations
@@ -19,8 +18,8 @@ from spillway.estimators.base import Observation, RequestContext
 class MaxTokensEstimator:
     """Reserves the requested output maximum, and learns nothing.
 
-    Input is counted with the character heuristic, so it is approximate and
-    documented as such, and the real figure replaces it at settlement.
+    Input is counted with the character heuristic, so it is approximate, and the
+    real figure replaces it at settlement.
 
     Example:
         >>> estimator = MaxTokensEstimator()

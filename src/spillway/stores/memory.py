@@ -66,10 +66,8 @@ def multi_worker_hint() -> str | None:
 def _warn_once_about_workers() -> None:
     """Say something the first time an in memory store is used across workers.
 
-    Once per process, and loudly. Silently enforcing the full limit in each of
-    several workers is the single most likely way someone concludes this library
-    does not work, because the overshoot appears at the provider and nothing
-    locally points at the cause.
+    Once per process, and loudly. The overshoot from each worker enforcing the
+    full limit appears at the provider, and nothing locally points at the cause.
     """
     global _warned_about_workers
     if _warned_about_workers:
@@ -120,17 +118,15 @@ class MemoryStore:
     """Not safe across processes. Every process using one enforces the full limit alone.
 
     That first line is the important one. Under a server running four workers,
-    four of these each admit up to the whole limit, so aggregate consumption
-    overshoots by a factor of four while every worker believes it is behaving.
-    Nothing about the symptom points at the cause. Share a coordinated store
-    across processes, or run one process.
+    four of these each admit up to the whole limit, so consumption overshoots
+    fourfold while every worker believes it is behaving. Share a coordinated
+    store across processes, or run one process.
 
-    Within one process it is correct and fast: the critical section is arithmetic
-    over a handful of dictionary entries, guarded by one lock.
+    Within one process it is correct and fast: arithmetic over a handful of
+    dictionary entries, guarded by one lock.
 
-    A reservation that is never settled, because the process making the call
-    died, is reclaimed once it outlives the expiry it was given. Without that,
-    gauges would leak until nothing was admitted at all.
+    A reservation whose process died is reclaimed once it outlives its expiry.
+    Without that, gauges leak until nothing is admitted at all.
 
     Args:
         clock: Where time comes from. Defaults to the real monotonic clock.
@@ -270,8 +266,8 @@ class MemoryStore:
         """Return the whole reservation and end the lease. See `Store.release`.
 
         Releasing a lease that is not outstanding does nothing rather than
-        raising. Release runs on the failure path, often from a finally block,
-        and a second error raised while handling the first one buries it.
+        raising: release runs on the failure path, often from a finally block,
+        where a second error would bury the first.
         """
         with self._lock:
             lease = self._leases.pop(lease_id, None)
@@ -284,9 +280,8 @@ class MemoryStore:
     def snapshot_sync(self, keys: Sequence[str]) -> Mapping[str, Utilisation]:
         """Report how full each key is. See `Store.snapshot`.
 
-        A key this store has never seen reports as empty rather than being
-        absent, so a caller can chart a dimension from the moment it is
-        configured rather than from its first use.
+        A key this store has never seen reports as empty rather than absent, so
+        a dimension can be charted from when it is configured, not first used.
         """
         with self._lock:
             now_ms = self._clock.now_ms()
@@ -327,17 +322,13 @@ class MemoryStore:
         """Reclaim anything held by a lease that outlived its expiry.
 
         A request whose process died can never settle, so without this every
-        gauge would leak monotonically until nothing at all was admitted, and
-        the symptom would be a limiter that gradually stopped working with no
-        indication why.
+        gauge leaks until nothing is admitted.
 
-        Only gauges come back. A rate charge is not released here because it
-        was really spent: the call went out, and the only thing missing is the
-        report of how it ended.
+        Only gauges come back. A rate charge was really spent: the call went
+        out, and only the report of how it ended is missing.
 
-        Lazy, and deliberately so. Reaping on the way into a reservation means
-        there is no background task to leak if the process never shuts down
-        cleanly, and a store nobody is using does not need reaping.
+        Lazy on purpose. Reaping on the way into a reservation means no
+        background task to leak, and a store nobody uses needs no reaping.
         """
         while self._expiry and self._expiry[0][0] <= now_ms:
             _expires_at_ms, lease_id = heapq.heappop(self._expiry)

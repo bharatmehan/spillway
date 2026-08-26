@@ -1,20 +1,18 @@
 """Predict output length from what a route has actually produced.
 
-The intellectual core of the library, and it is not complicated. Keep the recent
-output lengths for each route. Reserve the point that most of them came in
-under. Settle the truth, hand the difference back at once, and correct from the
-error.
+Keep the recent output lengths for each route, reserve the point that most of
+them came in under, settle the truth, hand the difference back at once, correct
+from the error.
 
-Nothing here claims the prediction is accurate, and nothing here ever should.
-Output length is not knowable in advance and this does not make it knowable. The
-claim is narrower and it is the one that matters: when the prediction is wrong,
-the cost is a little wasted headroom for the length of one request, never an
-overrun that breaks a limit and never a deadlock.
+Nothing here claims the prediction is accurate. Output length is not knowable in
+advance and this does not make it knowable. When the prediction is wrong, the
+cost is a little wasted headroom for one request, never an overrun that breaks a
+limit and never a deadlock.
 
-The leverage is the route key rather than any cleverness in here. Output length
-is close to unpredictable across every call to a model and quite predictable
-within one task, so grouping by what a request is for is worth more than any
-amount of arithmetic over a group that mixes classification with report writing.
+The leverage is the route key rather than any arithmetic in here: output length
+is far more predictable within one task than across every call to a model, so
+grouping by what a request is for beats any amount of cleverness over a group
+that mixes classification with report writing.
 """
 
 from __future__ import annotations
@@ -42,29 +40,26 @@ from spillway.estimators.max_tokens import MaxTokensEstimator
 DEFAULT_HISTORY = 1_000
 """How many recent output lengths to keep per route.
 
-Enough that a ninth decile means something, and few enough that the memory is an
-afterthought at any sane route count. It is a recency window as much as a
-sample: output length distributions drift as prompts and models change, and a
-history that never forgot would answer today's question with last quarter's
-traffic.
+Enough that a ninth decile means something, few enough that the memory is an
+afterthought. A recency window as much as a sample: output lengths drift as
+prompts and models change, and a history that never forgot would answer today's
+question with last quarter's traffic.
 """
 
 DEFAULT_MIN_SAMPLES = 30
 """How many observations a route needs before its own history is trusted.
 
-Below this, something else answers. A measurement that does not exist yet must
-not bind: reading a ninth decile off four samples would hold back traffic on the
-strength of almost nothing, which is worse than the safe and expensive answer.
+Below this, the fallback answers. Reading a ninth decile off four samples would
+hold back traffic on the strength of almost nothing.
 """
 
 
 DEFAULT_ADAPT_EVERY = 100
 """How many observations one route collects before its quantile may move.
 
-A quantile that moves per request is an oscillation, and an oscillating
-estimator is worse than a fixed conservative one. A hundred observations puts
-the overrun count in double figures at the ninth decile, which is enough for the
-share to mean something.
+A quantile that moves per request oscillates, which is worse than a fixed
+conservative one. A hundred observations puts the overrun count in double
+figures at the ninth decile, enough for the share to mean something.
 """
 
 DEFAULT_ADAPT_STEP = 0.02
@@ -73,21 +68,18 @@ DEFAULT_ADAPT_STEP = 0.02
 DEFAULT_QUANTILE_BOUNDS = (0.5, 0.99)
 """How far the quantile may travel in either direction.
 
-The floor is where overrunning half the time begins, which defeats the limit.
-The ceiling is short of one because these distributions are heavy tailed, so the
-last percent costs more than everything below it and reserving the maximum
-outright is the more honest way to ask for that.
+The floor is where overrunning half the time begins. The ceiling is short of one
+because these distributions are heavy tailed, so the last percent costs more than
+everything below it, and reserving the maximum outright says that more honestly.
 """
 
 STATISTICS_SPAN = 100
 """Roughly how many recent observations the reported ratios describe.
 
-Both ratios are weighted over this span rather than averaged over everything a
-route has ever seen. A lifetime average is the wrong answer here and it is wrong
-for a long time: a route that spent its first thirty requests reserving the
-maximum, because it had no history to read yet, carries that period in its
-lifetime error ratio for thousands of requests afterwards and reports a
-perfectly calibrated estimator as wasting several times the headroom it needs.
+Weighted over this span rather than averaged over a route's whole life. A route
+that spent its first thirty requests reserving the maximum would otherwise carry
+that period for thousands of requests afterwards, reporting a well calibrated
+estimator as wasting several times the headroom it needs.
 
 The ring is already a recency window for the same reason. These follow it.
 """
@@ -208,15 +200,13 @@ class QuantileEstimator:
         min_samples: How many observations a route needs before its own history
             is used. Below it, `fallback` answers.
         fallback: What answers below the threshold. Defaults to reserving the
-            maximum the caller allowed, which is safe and expensive and exactly
-            right when nothing is known yet. Any estimator will do, so
-            `StaticEstimator` is the way to say "until you know better, reserve
-            five hundred".
+            maximum the caller allowed. Any estimator will do, so
+            `StaticEstimator` says "until you know better, reserve five
+            hundred".
         history: How many recent output lengths to keep per route.
         adapt_quantile: Whether a route may move its own quantile when the
             overruns it sees stop matching the ones it promised. Off by
-            default: it is worth turning on once a workload has settled, and it
-            is not worth turning on before anyone knows what the workload is.
+            default, and worth turning on once a workload has settled.
         adapt_every: How many observations a route collects before its quantile
             may move again.
         adapt_step: How far it moves when it moves.
@@ -231,10 +221,10 @@ class QuantileEstimator:
     | 0.99 | One in a hundred | Large on a heavy tail | A rate limit response is expensive |
     | 1.00 | None | The same as the maximum | You have no history at all |
 
-    Output length distributions are heavy tailed, so the ninety ninth percentile
-    is often many multiples of the ninetieth and raising the quantile costs in a
-    way that is not linear. The ninth decile, with the surplus credited back the
-    moment the real figure is known, is the operating point worth defaulting to.
+    These distributions are heavy tailed, so the ninety ninth percentile is often
+    many multiples of the ninetieth and raising the quantile does not cost
+    linearly. The ninth decile, with the surplus credited back the moment the
+    real figure is known, is the operating point worth defaulting to.
 
     Example:
         >>> estimator = QuantileEstimator(

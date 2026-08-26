@@ -1,12 +1,11 @@
 """The vocabulary a store speaks.
 
-A store answers one question: may this request take all of this capacity, right
-now, and if not then what stopped it and for how long. Everything here exists to
-make that question askable in a single call.
+A store answers one question: may this request take all of this capacity right
+now, and if not, what stopped it and for how long.
 
-The types are deliberately dull. They cross the boundary into an implementation
-that may be a dictionary in this process or a script running on another machine,
-so they carry numbers and strings and nothing that only makes sense in Python.
+The types carry numbers and strings and nothing that only makes sense in Python,
+because they cross into an implementation that may be a dictionary in this
+process or a script on another machine.
 """
 
 from __future__ import annotations
@@ -20,11 +19,10 @@ from typing import Protocol
 class ClaimKind(Enum):
     """Which of the two kinds of limit a claim is against.
 
-    They behave differently enough that the difference is part of the type
-    rather than something a store has to infer. A rate claim is never given
-    back, it ages out as time passes. A gauge claim is held until the request
-    that took it settles or expires. Treating one as the other leaks concurrency
-    in one direction and double counts rate in the other.
+    Part of the type rather than something a store infers. A rate claim is never
+    given back, it ages out. A gauge claim is held until the request that took
+    it settles or expires. Treating one as the other leaks concurrency in one
+    direction and double counts rate in the other.
 
     Example:
         >>> ClaimKind.RATE.value
@@ -110,11 +108,9 @@ class Claim:
 class Delta:
     """A correction to apply to one key once the real cost is known.
 
-    The sign is the whole point. Positive means capacity was reserved and not
-    used, so it goes back. Negative means more was used than reserved, so it is
-    owed. Both happen constantly, because output length is predicted rather than
-    known, and a settlement path that could only express one of them would
-    either waste capacity or quietly break the limit.
+    Positive means capacity was reserved and not used, so it goes back. Negative
+    means more was used than reserved, so it is owed. Both happen constantly,
+    because output length is predicted rather than known.
 
     Example:
         >>> Delta("acme:output_tpm", ClaimKind.RATE, amount=765.0).amount
@@ -150,9 +146,7 @@ class Utilisation:
     def headroom(self) -> float:
         """The fraction of this key still free, from 1.0 down to 0.0.
 
-        A property rather than a stored field so it cannot drift away from the
-        two numbers it is derived from. A limit of zero reports no headroom,
-        which is true, rather than dividing by zero.
+        A limit of zero reports no headroom rather than dividing by zero.
         """
         if self.limit <= 0:
             return 0.0
@@ -166,9 +160,8 @@ class Utilisation:
 class ReserveResult:
     """What a store says when asked for capacity.
 
-    A bare yes or no is not enough. A refusal that does not say which key ran
-    out cannot be explained to a user, and one that does not say how long to
-    wait forces a caller to poll.
+    A refusal names the key that ran out and how long until it would fit, so it
+    can be explained and a waiter can be scheduled on it.
 
     Attributes:
         granted: Whether all the claims were applied.
@@ -196,9 +189,9 @@ class ReserveResult:
     def __post_init__(self) -> None:
         """Reject a result that says two contradictory things.
 
-        A store is an extension point, so this catches a third party
-        implementation returning a shape the rest of the library would
-        misread, at the point of the mistake rather than three frames later.
+        A store is an extension point, so a third party implementation returning
+        a shape the library would misread fails here rather than three frames
+        later.
 
         Raises:
             ValueError: if the result is internally inconsistent.
@@ -251,11 +244,9 @@ class ReserveResult:
 class Store(Protocol):
     """Where reservations are recorded, asked for capacity one batch at a time.
 
-    The batch is the whole design. A store is never asked about one key,
-    because a request admitted against two limits and refused by the third
-    would leave the first two wrongly consumed, and that is precisely the
-    overshoot this library exists to prevent. So the entire set of claims goes
-    in together and either all of it applies or none of it does.
+    A store is never asked about one key. A request admitted against two limits
+    and refused by the third would leave the first two wrongly consumed, so the
+    whole set goes in together and either all of it applies or none does.
 
     Implement this to coordinate through something this library does not ship.
     The hard part is not the interface, it is the atomicity: `reserve` must be
@@ -304,9 +295,9 @@ class Store(Protocol):
 
         Returns:
             A granted result carrying a lease identifier, or a refusal naming
-            the key that bound and how long until it would not have. Either
-            way, utilisation for every key touched, so that explaining the
-            decision costs no second round trip.
+            the key that bound and how long until it would not have. Either way,
+            utilisation for every key touched, so explaining the decision costs
+            no second round trip.
         """
         ...
 
@@ -337,13 +328,13 @@ class Store(Protocol):
 class SyncStore(Protocol):
     """The same four operations, for callers with no event loop.
 
-    A store may implement this, the asynchronous protocol, or both. The two are
-    kept separate rather than merged because their implementations genuinely
-    differ: a store that talks over a network has real waiting to do, while one
-    that keeps a dictionary in this process does not and would only be pretending.
+    A store may implement this, the asynchronous protocol, or both. Kept
+    separate because the implementations genuinely differ: one talking over a
+    network has real waiting to do, one keeping a dictionary in this process
+    does not. The synchronous facade itself arrives in a later release.
 
-    The names carry a suffix so that one class can implement both protocols
-    without either shadowing the other.
+    The names carry a suffix so one class can implement both protocols without
+    either shadowing the other.
 
     Example:
         >>> class Unlimited:
@@ -391,7 +382,7 @@ class DuplexStore(Store, SyncStore, Protocol):
     """A store that serves both facades, implementing both protocols.
 
     Every store this library ships is one. The distinction exists because a
-    third party store may reasonably implement only the half it can support.
+    third party store may implement only the half it can support.
 
     Example:
         >>> from spillway.stores.memory import MemoryStore
